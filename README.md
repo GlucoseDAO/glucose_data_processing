@@ -54,6 +54,7 @@ The project requires the following Python packages (automatically managed by UV)
 - **polars** (≥1.33.1) - Fast DataFrame library for large datasets
 - **pyarrow** (≥21.0.0) - Columnar data format for efficient data processing
 - **typer** (≥0.12.0) - Command-line interface framework
+- **pyyaml** (≥6.0) - YAML configuration file support
 
 All dependencies are specified in `pyproject.toml` and will be automatically installed with `uv sync`.
 
@@ -71,10 +72,11 @@ This project is designed to preprocess continuous glucose monitoring (CGM) data 
 ### Project Goals
 
 1. **Data Consolidation**: Merge multiple CSV files into a single, chronologically ordered dataset
-2. **Gap Detection**: Identify time gaps and create sequence boundaries
-3. **Smart Interpolation**: Fill small gaps while preserving sequence integrity
-4. **Calibration Handling**: Remove or smooth calibration-related data spikes
-5. **ML-Ready Output**: Generate clean, continuous sequences suitable for time-series ML models
+2. **Data Standardization**: Replace textual glucose values (High/Low) with numeric equivalents
+3. **Calibration Removal**: Remove calibration events to create interpolatable gaps
+4. **Gap Detection**: Identify time gaps and create sequence boundaries
+5. **Smart Interpolation**: Fill small gaps while preserving sequence integrity
+6. **ML-Ready Output**: Generate clean, continuous sequences suitable for time-series ML models
 
 ## 🖥️ CLI Usage
 
@@ -113,7 +115,103 @@ python glucose_cli.py ./000-csv --calibration-period 165 --remove-after-calibrat
 
 # Quick processing without statistics
 python glucose_cli.py ./000-csv --no-stats --output quick_output.csv
+
+# Use configuration file
+python glucose_cli.py ./000-csv --config glucose_config.yaml
+
+# Override config file parameters with CLI arguments
+python glucose_cli.py ./000-csv --config glucose_config.yaml --interval 10 --gap-max 30
 ```
+
+## ⚙️ YAML Configuration File
+
+### Overview
+
+For complex configurations or repeated processing, you can use a YAML configuration file to specify all parameters. Command line arguments always take precedence over configuration file values.
+
+### Configuration File Usage
+
+```bash
+# Use configuration file
+python glucose_cli.py ./000-csv --config glucose_config.yaml
+
+# Override specific parameters from config file
+python glucose_cli.py ./000-csv --config glucose_config.yaml --interval 10 --gap-max 30
+
+# Use config file with custom output
+python glucose_cli.py ./000-csv --config glucose_config.yaml --output custom_output.csv
+```
+
+### Configuration File Structure
+
+The `glucose_config.yaml` file contains the essential configuration options:
+
+```yaml
+# Basic processing parameters
+expected_interval_minutes: 5
+small_gap_max_minutes: 15
+remove_calibration: true
+min_sequence_len: 200
+save_intermediate_files: false
+
+# Calibration period detection
+calibration_period_minutes: 165
+remove_after_calibration_hours: 24
+
+# Glucose value replacement (configurable High/Low values)
+glucose_value_replacement:
+  high_value: 401 # Replace 'High' with 401 mg/dL
+  low_value: 39 # Replace 'Low' with 39 mg/dL
+  enabled: true
+```
+
+### Key Configuration Features
+
+#### **Core Processing Parameters**
+
+- **`expected_interval_minutes`**: Time discretization interval (default: 5 minutes)
+- **`small_gap_max_minutes`**: Maximum gap size to interpolate (default: 15 minutes)
+- **`remove_calibration`**: Remove calibration events to create interpolatable gaps
+- **`min_sequence_len`**: Minimum sequence length for ML training (default: 200 records)
+- **`save_intermediate_files`**: Save intermediate files for debugging
+
+#### **Calibration Period Detection**
+
+- **`calibration_period_minutes`**: Gap duration considered as calibration period (default: 165 minutes)
+- **`remove_after_calibration_hours`**: Hours of data to remove after calibration (default: 24 hours)
+
+#### **Configurable High/Low Values**
+
+- **`high_value`**: Numeric value to replace 'High' glucose readings (default: 401 mg/dL)
+- **`low_value`**: Numeric value to replace 'Low' glucose readings (default: 39 mg/dL)
+- **`enabled`**: Enable/disable High/Low value replacement
+
+### Priority Order
+
+1. **Command line arguments** (highest priority)
+2. **Configuration file values**
+3. **Default values** (lowest priority)
+
+Example:
+
+```bash
+# Config file sets interval=5, CLI overrides to 10
+python glucose_cli.py ./000-csv --config glucose_config.yaml --interval 10
+# Result: interval=10 (CLI wins)
+```
+
+### Creating Your Own Configuration
+
+1. Copy `glucose_config.yaml` to create your custom configuration
+2. Modify values as needed for your specific use case (focus on the core parameters)
+3. Use the `--config` parameter to specify your file
+
+```bash
+# Use custom configuration
+python glucose_cli.py ./000-csv --config my_custom_config.yaml
+```
+
+**Note**: The configuration file includes only the essential parameters that are actively used by the preprocessing pipeline. This keeps the configuration simple and focused on the most important settings.
 
 ## 📁 Input File Requirements
 
@@ -163,7 +261,26 @@ Records with valid timestamps: 1,200,000
 Date range: 2019-10-14T16:42:37 to 2025-09-17T13:30:12
 ```
 
-#### 2. Gap Detection and Sequences
+#### 2. High/Low Value Replacement
+
+```
+Replaced 245 'High' values with 401
+Replaced 89 'Low' values with 39
+Total replacements: 334
+✓ Glucose field converted to Float64 type
+```
+
+#### 3. Calibration Event Removal
+
+```
+Found 245 calibration events to remove
+Removed 245 calibration events
+Records before removal: 1,200,000
+Records after removal: 1,199,755
+✓ Calibration events removed - gaps can now be interpolated
+```
+
+#### 4. Gap Detection and Sequences
 
 ```
 Created 1,245 sequences
@@ -172,7 +289,7 @@ Calibration Periods Detected: 89
 Records Removed After Calibration: 45,678
 ```
 
-#### 3. Interpolation Analysis
+#### 5. Interpolation Analysis
 
 ```
 Small Gaps Identified and Processed: 2,456 gaps
@@ -182,7 +299,7 @@ Glucose Interpolations: 4,123 values
 Large Gaps Skipped: 1,244 gaps
 ```
 
-#### 4. Sequence Filtering
+#### 6. Sequence Filtering
 
 ```
 Original Sequences: 1,245
@@ -218,6 +335,15 @@ The difference between "Small Gaps Identified" and actual interpolations occurs 
 - Gaps at sequence boundaries are not interpolated
 - Large gaps (>15 min) create new sequences instead of being filled
 
+### Why Calibration Removal Instead of Interpolation?
+
+The new approach removes calibration events entirely rather than interpolating their values because:
+
+1. **Cleaner Data**: Calibration events often contain spikes or inaccurate readings
+2. **Better Interpolation**: Removing calibration events creates gaps that can be interpolated using surrounding EGV (glucose) values
+3. **Consistent Methodology**: All gaps are treated uniformly in the interpolation step
+4. **Reduced Noise**: Eliminates potential artifacts from calibration spikes
+
 ### Why Fewer Actual Interpolated Values?
 
 The "Total Field Interpolations" count includes:
@@ -232,6 +358,40 @@ The "Total Field Interpolations" count includes:
 2. **Non-numeric values**: Text or invalid data in adjacent cells
 3. **Mixed event types**: Different event types around the gap
 4. **Boundary conditions**: Gaps at the start/end of sequences
+
+### High/Low Value Replacement
+
+The system automatically replaces textual glucose values with numeric equivalents:
+
+- **"High"** → **401 mg/dL** (configurable): Represents glucose readings above the device's upper measurement limit
+- **"Low"** → **39 mg/dL** (configurable): Represents glucose readings below the device's lower measurement limit
+
+#### Configurable Replacement Values
+
+You can customize the High/Low replacement values through:
+
+1. **Configuration File** (`glucose_config.yaml`):
+
+   ```yaml
+   glucose_value_replacement:
+     high_value: 401 # Custom high value
+     low_value: 39 # Custom low value
+     enabled: true
+   ```
+
+2. **Command Line** (when using config file):
+   ```bash
+   python glucose_cli.py ./000-csv --config glucose_config.yaml --high-value 450 --low-value 30
+   ```
+
+#### Why This Replacement is Necessary
+
+1. **ML Compatibility**: Machine learning models require numeric data
+2. **Consistent Data Types**: Ensures the glucose field is Float64 throughout the dataset
+3. **Meaningful Values**: 401 and 39 are clinically relevant threshold values that preserve the information that readings were outside normal measurement ranges
+4. **Flexibility**: Allows customization for different devices or clinical requirements
+
+The replacement occurs early in the pipeline (Step 2) to ensure all subsequent processing works with numeric glucose values.
 
 ## 🔧 Advanced Configuration
 
@@ -266,11 +426,12 @@ python glucose_cli.py ./000-csv --save-intermediate --verbose
 This creates files like:
 
 - `consolidated_data.csv`
-- `step2_sequences_created.csv`
-- `step3_interpolated_values.csv`
-- `step4_calibration_interpolated.csv`
-- `step5_filtered_sequences.csv`
-- `step6_ml_ready.csv`
+- `step2_high_low_replaced.csv`
+- `step3_calibrations_removed.csv`
+- `step4_sequences_created.csv`
+- `step5_interpolated_values.csv`
+- `step6_filtered_sequences.csv`
+- `step7_ml_ready.csv`
 
 ## 📈 Output Data Format
 

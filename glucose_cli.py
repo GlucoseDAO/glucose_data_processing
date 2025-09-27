@@ -17,6 +17,11 @@ def main(
         ..., 
         help="Path to folder containing CSV files to process"
     ),
+    config_file: str = typer.Option(
+        None,
+        "--config", "-c",
+        help="Path to YAML configuration file (command line args override config values)"
+    ),
     output_file: str = typer.Option(
         "glucose_ml_ready.csv",
         "--output", "-o",
@@ -37,10 +42,10 @@ def main(
         "--min-length", "-l",
         help="Minimum sequence length to keep for ML training"
     ),
-    interpolate_calibration: bool = typer.Option(
+    remove_calibration: bool = typer.Option(
         True,
-        "--calibration/--no-calibration",
-        help="Interpolate calibration glucose values to remove spikes"
+        "--remove-calibration/--keep-calibration",
+        help="Remove calibration events to create interpolatable gaps"
     ),
     verbose: bool = typer.Option(
         False,
@@ -66,18 +71,29 @@ def main(
         24,
         "--remove-after-calibration", "-r",
         help="Hours of data to remove after calibration period (default: 24 hours)"
+    ),
+    glucose_only: bool = typer.Option(
+        False,
+        "--glucose-only",
+        help="Output only glucose data: remove Event Type, Insulin Value, and Carb Value fields, keep only rows with glucose values"
     )
 ):
     """
     Process glucose data from CSV folder for machine learning.
     
     This tool consolidates CSV files from the input folder and processes them through
-    the complete ML preprocessing pipeline including gap detection, interpolation,
-    calibration smoothing, calibration period detection, and sequence filtering.
+    the complete ML preprocessing pipeline including High/Low value replacement, calibration removal, 
+    gap detection, interpolation, calibration period detection, and sequence filtering.
     
-    Example:
+    Examples:
+        # Use default settings
         glucose-cli ./csv-folder --output ml_data.csv --verbose
-        glucose-cli ./csv-folder --calibration-period 165 --remove-after-calibration 24
+        
+        # Use configuration file with CLI overrides
+        glucose-cli ./csv-folder --config glucose_config.yaml --output ml_data.csv
+        
+        # Override specific parameters from config file
+        glucose-cli ./csv-folder --config glucose_config.yaml --interval 10 --gap-max 30
     """
     
     # Validate input path
@@ -98,21 +114,48 @@ def main(
         typer.echo(f"   ⏱️  Time interval: {interval_minutes} minutes")
         typer.echo(f"   📏 Gap max: {gap_max_minutes} minutes")
         typer.echo(f"   📊 Min sequence length: {min_sequence_len}")
-        typer.echo(f"   🔧 Interpolate calibration: {interpolate_calibration}")
+        typer.echo(f"   🗑️  Remove calibration events: {remove_calibration}")
         typer.echo(f"   🕐 Calibration period: {calibration_period_minutes} minutes")
         typer.echo(f"   🗑️  Remove after calibration: {remove_after_calibration_hours} hours")
         typer.echo(f"   💾 Save intermediate files: {save_intermediate_files}")
+        typer.echo(f"   🍯 Glucose only mode: {glucose_only}")
     
     try:
-        preprocessor = GlucoseMLPreprocessor(
-            expected_interval_minutes=interval_minutes,
-            small_gap_max_minutes=gap_max_minutes,
-            interpolate_calibration=interpolate_calibration,
-            min_sequence_len=min_sequence_len,
-            save_intermediate_files=save_intermediate_files,
-            calibration_period_minutes=calibration_period_minutes,
-            remove_after_calibration_hours=remove_after_calibration_hours
-        )
+        # Create preprocessor from config file if provided, otherwise use CLI arguments
+        if config_file:
+            config_path_obj = Path(config_file)
+            if not config_path_obj.exists():
+                typer.echo(f"❌ Error: Config file '{config_file}' does not exist", err=True)
+                raise typer.Exit(1)
+            
+            if verbose:
+                typer.echo(f"📄 Loading configuration from: {config_file}")
+            
+            # CLI arguments override config file values
+            cli_overrides = {
+                'expected_interval_minutes': interval_minutes,
+                'small_gap_max_minutes': gap_max_minutes,
+                'remove_calibration': remove_calibration,
+                'min_sequence_len': min_sequence_len,
+                'save_intermediate_files': save_intermediate_files,
+                'calibration_period_minutes': calibration_period_minutes,
+                'remove_after_calibration_hours': remove_after_calibration_hours,
+                'glucose_only': glucose_only
+            }
+            
+            preprocessor = GlucoseMLPreprocessor.from_config_file(config_file, **cli_overrides)
+        else:
+            # Use CLI arguments directly
+            preprocessor = GlucoseMLPreprocessor(
+                expected_interval_minutes=interval_minutes,
+                small_gap_max_minutes=gap_max_minutes,
+                remove_calibration=remove_calibration,
+                min_sequence_len=min_sequence_len,
+                save_intermediate_files=save_intermediate_files,
+                calibration_period_minutes=calibration_period_minutes,
+                remove_after_calibration_hours=remove_after_calibration_hours,
+                glucose_only=glucose_only
+            )
         
         # Process data
         if verbose:
@@ -143,16 +186,23 @@ def main(
                 typer.echo(f"   📏 Longest sequence: {seq_analysis['longest_sequence']:,} records")
                 typer.echo(f"   📊 Average sequence: {seq_analysis['sequence_lengths']['mean']:.1f} records")
                 
+                # Show replacement summary
+                if 'replacement_analysis' in statistics:
+                    replacement_analysis = statistics['replacement_analysis']
+                    if replacement_analysis['total_replacements'] > 0:
+                        typer.echo(f"   🔄 High/Low replacements: {replacement_analysis['total_replacements']:,} values")
+                
                 # Show interpolation summary
                 interp_analysis = statistics['interpolation_analysis']
                 typer.echo(f"   🔧 Gaps processed: {interp_analysis['small_gaps_filled']:,} gaps")
                 typer.echo(f"   🔧 Data points created: {interp_analysis['total_interpolated_data_points']:,} points")
                 typer.echo(f"   🔧 Field interpolations: {interp_analysis['total_interpolations']:,} values")
                 
-                # Show calibration summary if enabled
-                if interpolate_calibration and 'calibration_analysis' in statistics:
-                    calib_analysis = statistics['calibration_analysis']
-                    typer.echo(f"   🔬 Calibration interpolations: {calib_analysis['calibration_interpolations']:,}")
+                # Show calibration removal summary if enabled
+                if remove_calibration and 'calibration_removal_analysis' in statistics:
+                    removal_analysis = statistics['calibration_removal_analysis']
+                    if removal_analysis['calibration_events_removed'] > 0:
+                        typer.echo(f"   🗑️  Calibration events removed: {removal_analysis['calibration_events_removed']:,}")
                 
                 # Show filtering summary
                 if 'filtering_analysis' in statistics:

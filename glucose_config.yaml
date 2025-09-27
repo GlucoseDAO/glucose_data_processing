@@ -1,0 +1,69 @@
+# Glucose Data Preprocessing Configuration File
+# This file contains all configurable parameters for glucose data preprocessing
+# Command line arguments take precedence over values specified in this file
+
+# =============================================================================
+# DATA PROCESSING PARAMETERS
+# =============================================================================
+
+# Time discretization interval in minutes
+# Expected interval between consecutive glucose measurements
+# Default: 5 minutes (typical CGM sampling rate)
+expected_interval_minutes: 5
+
+# Maximum gap size to interpolate in minutes
+# Gaps larger than this are treated as sequence boundaries
+# Default: 15 minutes (3x the expected interval)
+small_gap_max_minutes: 15
+
+# Remove calibration events to create interpolatable gaps
+# When true, removes all rows with Event Type = 'Calibration'
+# This creates gaps that can be interpolated using surrounding EGV values
+# Default: true (recommended for cleaner data)
+remove_calibration: true
+
+# Minimum sequence length to keep for ML training
+# Sequences shorter than this will be filtered out
+# Default: 200 records (16.7 hours at 5-minute intervals)
+min_sequence_len: 200
+
+# Save intermediate files after each processing step
+# Useful for debugging and understanding the preprocessing pipeline
+# Default: false
+save_intermediate_files: false
+
+# =============================================================================
+# CALIBRATION PERIOD DETECTION
+# =============================================================================
+
+# Gap duration considered as calibration period in minutes
+# Large gaps (e.g., sensor changes) are treated as calibration periods
+# Default: 165 minutes (2 hours 45 minutes)
+calibration_period_minutes: 165
+
+# Hours of data to remove after calibration period
+# Data immediately after sensor changes can be unreliable
+# Default: 24 hours
+remove_after_calibration_hours: 24
+
+# =============================================================================
+# GLUCOSE VALUE REPLACEMENT
+# =============================================================================
+
+# Replace textual glucose values with numeric equivalents
+# High/Low values are replaced with configurable numeric values
+glucose_value_replacement:
+  # Replace 'High' glucose readings with this numeric value (mg/dL)
+  # Choose a value above typical glucose range but below dangerous levels
+  # Default: 401 mg/dL
+  high_value: 401
+
+  # Replace 'Low' glucose readings with this numeric value (mg/dL)
+  # Choose a value below typical glucose range but above dangerous levels
+  # Default: 39 mg/dL
+  low_value: 39
+
+  # Enable/disable High/Low value replacement
+  # When false, High/Low values are kept as strings
+  # Default: true
+  enabled: true
