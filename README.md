@@ -100,6 +100,7 @@ python glucose_cli.py <input_folder> [OPTIONS]
 | `--save-intermediate`, `-s`        |       | `False`                | Save intermediate files after each step                 |
 | `--calibration-period`, `-c`       |       | `165`                  | Gap duration considered as calibration period (minutes) |
 | `--remove-after-calibration`, `-r` |       | `24`                   | Hours of data to remove after calibration period        |
+| `--glucose-only`                   |       | `False`                | Output only glucose data with simplified fields         |
 
 ### Examples
 
@@ -121,6 +122,12 @@ python glucose_cli.py ./000-csv --config glucose_config.yaml
 
 # Override config file parameters with CLI arguments
 python glucose_cli.py ./000-csv --config glucose_config.yaml --interval 10 --gap-max 30
+
+# Process with glucose-only output (simplified format)
+python glucose_cli.py ./000-csv --glucose-only --output glucose_only_data.csv
+
+# Combine glucose-only with other options
+python glucose_cli.py ./000-csv --glucose-only --min-length 100 --verbose
 ```
 
 ## ⚙️ YAML Configuration File
@@ -163,6 +170,9 @@ glucose_value_replacement:
   high_value: 401 # Replace 'High' with 401 mg/dL
   low_value: 39 # Replace 'Low' with 39 mg/dL
   enabled: true
+
+# Glucose-only mode (simplified output)
+glucose_only: false # Output only glucose data with simplified fields
 ```
 
 ### Key Configuration Features
@@ -185,6 +195,10 @@ glucose_value_replacement:
 - **`high_value`**: Numeric value to replace 'High' glucose readings (default: 401 mg/dL)
 - **`low_value`**: Numeric value to replace 'Low' glucose readings (default: 39 mg/dL)
 - **`enabled`**: Enable/disable High/Low value replacement
+
+#### **Glucose-Only Mode**
+
+- **`glucose_only`**: When enabled, outputs only glucose data with simplified fields (default: false)
 
 ### Priority Order
 
@@ -435,6 +449,8 @@ This creates files like:
 
 ## 📈 Output Data Format
 
+### Standard Output Format
+
 The final ML-ready dataset contains:
 
 | Column                            | Type    | Description                                    |
@@ -446,6 +462,41 @@ The final ML-ready dataset contains:
 | `Insulin Value (u)`               | Float64 | Insulin amount                                 |
 | `Carb Value (grams)`              | Float64 | Carbohydrate amount                            |
 
+### Glucose-Only Output Format
+
+When using the `--glucose-only` option, the output is simplified to contain only glucose data:
+
+| Column                            | Type    | Description                                    |
+| --------------------------------- | ------- | ---------------------------------------------- |
+| `sequence_id`                     | Integer | Unique identifier for continuous data segments |
+| `Timestamp (YYYY-MM-DDThh:mm:ss)` | String  | ISO formatted timestamp                        |
+| `Glucose Value (mg/dL)`           | Float64 | Glucose reading (interpolated where needed)    |
+
+#### Key Differences in Glucose-Only Mode:
+
+- **Removed Fields**: `Event Type`, `Insulin Value (u)`, `Carb Value (grams)`
+- **Filtered Data**: Only rows with non-null glucose values are included
+- **Simplified Output**: Focuses exclusively on glucose time-series data
+- **Smaller File Size**: Reduced data volume for glucose-specific analysis
+
+#### Example Output Comparison:
+
+**Standard Format:**
+
+```csv
+sequence_id,Timestamp (YYYY-MM-DDThh:mm:ss),Event Type,Glucose Value (mg/dL),Insulin Value (u),Carb Value (grams)
+0,2019-10-14T16:47:37,EGV,55.0,,
+0,2019-10-14T16:52:37,EGV,55.0,,
+```
+
+**Glucose-Only Format:**
+
+```csv
+sequence_id,Timestamp (YYYY-MM-DDThh:mm:ss),Glucose Value (mg/dL)
+0,2019-10-14T16:47:37,55.0
+0,2019-10-14T16:52:37,55.0
+```
+
 ## 🎯 Machine Learning Applications
 
 The processed data is optimized for:
@@ -454,6 +505,32 @@ The processed data is optimized for:
 - **Anomaly Detection**: Identify unusual glucose patterns
 - **Sequence Modeling**: LSTM, GRU, or Transformer models
 - **Classification**: Event type prediction or risk assessment
+
+### When to Use Glucose-Only Mode
+
+The `--glucose-only` option is particularly useful for:
+
+- **Pure Glucose Analysis**: When you only need glucose time-series data
+- **Simplified Models**: For models that don't require insulin or carb information
+- **Data Reduction**: When working with large datasets and need to reduce file size
+- **Glucose Forecasting**: For models focused exclusively on glucose prediction
+- **Research Applications**: When studying glucose patterns without confounding variables
+
+### Use Cases for Each Format
+
+**Standard Format** (all fields):
+
+- Multi-variate time series analysis
+- Models that consider insulin and carb effects
+- Comprehensive diabetes management applications
+- Research requiring full context
+
+**Glucose-Only Format**:
+
+- Pure glucose forecasting models
+- Anomaly detection in glucose patterns
+- Simplified time series analysis
+- Educational or demonstration purposes
 
 ## 🤝 Contributing
 
