@@ -58,30 +58,41 @@ class StatsManager:
                     timestamps = valid_timestamps[ts_col].cast(pl.Utf8, strict=False).sort()
                 date_range = {'start': timestamps[0], 'end': timestamps[-1]}
         
-        sequence_counts = df.group_by(seq_id_col).len().sort(seq_id_col)
-        seq_lens = sequence_counts['len']
-        
-        sequence_lengths_stats = {
-            'count': len(seq_lens),
-            'mean': seq_lens.mean() if not seq_lens.is_empty() else 0,
-            'std': seq_lens.std() if not seq_lens.is_empty() else 0,
-            'min': seq_lens.min() if not seq_lens.is_empty() else 0,
-            '25%': seq_lens.quantile(0.25) if not seq_lens.is_empty() else 0,
-            '50%': seq_lens.median() if not seq_lens.is_empty() else 0,
-            '75%': seq_lens.quantile(0.75) if not seq_lens.is_empty() else 0,
-            'max': seq_lens.max() if not seq_lens.is_empty() else 0
-        }
-        
-        if not seq_lens.is_empty():
-            counts_df = seq_lens.value_counts().sort("len")
-            sequences_by_length = dict(zip(counts_df["len"].to_list(), counts_df["count"].to_list()))
+        if seq_id_col in df.columns:
+            sequence_counts = df.group_by(seq_id_col).len().sort(seq_id_col)
+            seq_lens = sequence_counts['len']
+            
+            sequence_lengths_stats = {
+                'count': len(seq_lens),
+                'mean': seq_lens.mean() if not seq_lens.is_empty() else 0,
+                'std': seq_lens.std() if not seq_lens.is_empty() else 0,
+                'min': seq_lens.min() if not seq_lens.is_empty() else 0,
+                '25%': seq_lens.quantile(0.25) if not seq_lens.is_empty() else 0,
+                '50%': seq_lens.median() if not seq_lens.is_empty() else 0,
+                '75%': seq_lens.quantile(0.75) if not seq_lens.is_empty() else 0,
+                'max': seq_lens.max() if not seq_lens.is_empty() else 0
+            }
+            
+            if not seq_lens.is_empty():
+                counts_df = seq_lens.value_counts().sort("len")
+                sequences_by_length = dict(zip(counts_df["len"].to_list(), counts_df["count"].to_list()))
+            else:
+                sequences_by_length = {}
+            
+            all_lengths = seq_lens.to_list() if not seq_lens.is_empty() else []
+            total_sequences = df[seq_id_col].n_unique()
         else:
+            sequence_lengths_stats = {
+                'count': 0, 'mean': 0, 'std': 0, 'min': 0, '25%': 0, '50%': 0, '75%': 0, 'max': 0
+            }
             sequences_by_length = {}
+            all_lengths = []
+            total_sequences = 0
 
         stats = {
             'dataset_overview': {
                 'total_records': len(df),
-                'total_sequences': df[seq_id_col].n_unique() if seq_id_col in df.columns else 0,
+                'total_sequences': total_sequences,
                 'date_range': date_range,
                 'original_records': self.original_record_count if self.original_record_count > 0 else len(df)
             },
@@ -90,7 +101,7 @@ class StatsManager:
                 'longest_sequence': sequence_lengths_stats['max'],
                 'shortest_sequence': sequence_lengths_stats['min'],
                 'sequences_by_length': sequences_by_length,
-                'all_lengths': seq_lens.to_list() if not seq_lens.is_empty() else []
+                'all_lengths': all_lengths
             },
             'gap_analysis': gap_stats,
             'interpolation_analysis': interp_stats,
