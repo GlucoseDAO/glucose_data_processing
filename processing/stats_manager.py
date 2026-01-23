@@ -1,10 +1,11 @@
 """Statistics management for glucose data processing."""
 
 import polars as pl
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union, Sequence
 from loguru import logger
 from processing.core.fields import StandardFieldNames, INTERPOLATED_EVENT_TYPE
 from formats.base_converter import CSVFormatConverter
+from pathlib import Path
 
 class StatsManager:
     """
@@ -21,7 +22,8 @@ class StatsManager:
         interp_stats: Dict[str, Any], 
         filter_stats: Optional[Dict[str, Any]] = None, 
         glucose_filter_stats: Optional[Dict[str, Any]] = None, 
-        fixed_freq_stats: Optional[Dict[str, Any]] = None
+        fixed_freq_stats: Optional[Dict[str, Any]] = None,
+        cleaning_stats: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Generate comprehensive statistics.
@@ -105,6 +107,7 @@ class StatsManager:
                 'all_lengths': all_lengths
             },
             'gap_analysis': gap_stats,
+            'cleaning_analysis': cleaning_stats if cleaning_stats else {},
             'interpolation_analysis': interp_stats,
             'calibration_removal_analysis': {},
             'filtering_analysis': filter_stats if filter_stats else {},
@@ -124,7 +127,7 @@ class StatsManager:
         
         return stats
 
-    def aggregate_statistics(self, all_statistics: List[Dict[str, Any]], csv_folders: List[str]) -> Dict[str, Any]:
+    def aggregate_statistics(self, all_statistics: List[Dict[str, Any]], csv_folders: Sequence[Union[str, Path]]) -> Dict[str, Any]:
         """
         Aggregate statistics from multiple databases.
         """
@@ -165,6 +168,9 @@ class StatsManager:
                     'sequences_marked_for_removal': 0,
                     'total_records_marked_for_removal': 0
                 }
+            },
+            'cleaning_analysis': {
+                'removed_records': 0
             },
             'interpolation_analysis': {
                 'total_interpolations': 0,
@@ -259,6 +265,9 @@ class StatsManager:
             aggregated['gap_analysis']['calibration_period_analysis']['calibration_periods_detected'] += calib_analysis.get('calibration_periods_detected', 0)
             aggregated['gap_analysis']['calibration_period_analysis']['sequences_marked_for_removal'] += calib_analysis.get('sequences_marked_for_removal', 0)
             aggregated['gap_analysis']['calibration_period_analysis']['total_records_marked_for_removal'] += calib_analysis.get('total_records_marked_for_removal', 0)
+            
+            cleaning_analysis = stats.get('cleaning_analysis', {})
+            aggregated['cleaning_analysis']['removed_records'] += cleaning_analysis.get('removed_records', 0)
             
             interp_analysis = stats.get('interpolation_analysis', {})
             aggregated['interpolation_analysis']['total_interpolations'] += interp_analysis.get('total_interpolations', 0)
@@ -409,6 +418,11 @@ def print_statistics(stats: Dict[str, Any], preprocessor_params: Optional[Dict[s
         logger.info(f"\nCALIBRATION PERIOD ANALYSIS:")
         logger.info(f"   Calibration Periods Detected: {calib_analysis.get('calibration_periods_detected', 0):,}")
         logger.info(f"   Records Removed After Calibration: {calib_analysis.get('total_records_marked_for_removal', 0):,}")
+    
+    cleaning_analysis = stats.get('cleaning_analysis', {})
+    if cleaning_analysis:
+        logger.info(f"\nDATA CLEANING ANALYSIS:")
+        logger.info(f"   Records Removed In Large Gaps: {cleaning_analysis.get('removed_records', 0):,}")
     
     interp_analysis = stats.get('interpolation_analysis', {})
     if interp_analysis:

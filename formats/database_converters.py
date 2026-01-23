@@ -8,7 +8,7 @@ of different database structures (mono-user vs multi-user).
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 import polars as pl
 from loguru import logger
 from formats.base_converter import CSVFormatConverter
@@ -42,7 +42,7 @@ class DatabaseConverter(ABC):
         return str(db_config.get("start_with_user_id")) if "start_with_user_id" in db_config else None
 
     @abstractmethod
-    def consolidate_data(self, data_folder: str, output_file: Optional[str] = None) -> pl.DataFrame:
+    def consolidate_data(self, data_folder: Union[str, Path], output_file: Optional[Union[str, Path]] = None) -> pl.DataFrame:
         """
         Consolidate data from the database folder.
         
@@ -116,7 +116,7 @@ class DatabaseConverter(ABC):
 class MonoUserDatabaseConverter(DatabaseConverter):
     """Converter for mono-user databases (Dexcom, Libre3)."""
     
-    def consolidate_data(self, data_folder: str, output_file: Optional[str] = None) -> pl.DataFrame:
+    def consolidate_data(self, data_folder: Union[str, Path], output_file: Optional[Union[str, Path]] = None) -> pl.DataFrame:
         """
         Consolidate mono-user data from multiple CSV files.
         
@@ -340,7 +340,7 @@ class MonoUserDatabaseConverter(DatabaseConverter):
 class MultiUserDatabaseConverter(DatabaseConverter):
     """Converter for multi-user databases (UoM, Zendo)."""
     
-    def consolidate_data(self, data_folder: str, output_file: Optional[str] = None) -> pl.DataFrame:
+    def consolidate_data(self, data_folder: Union[str, Path], output_file: Optional[Union[str, Path]] = None) -> pl.DataFrame:
         """
         Consolidate multi-user data from multiple CSV files.
         

@@ -119,7 +119,7 @@ class AIReadyDatabaseConverter(DatabaseConverter):
     def get_database_name(self) -> str:
         return "AI-READY (zip) Database"
 
-    def consolidate_data(self, data_folder: str, output_file: Optional[str] = None) -> pl.DataFrame:
+    def consolidate_data(self, data_folder: Union[str, Path], output_file: Optional[Union[str, Path]] = None) -> pl.DataFrame:
         zip_path = Path(data_folder)
         if not zip_path.exists():
             raise FileNotFoundError(f"AI-READY zip not found: {data_folder}")
@@ -132,7 +132,7 @@ class AIReadyDatabaseConverter(DatabaseConverter):
         interval_minutes = int(self.config.get("expected_interval_minutes", 5))
 
         frames: list[pl.DataFrame] = []
-        for user_df in self.iter_user_event_frames(str(zip_path), interval_minutes=interval_minutes):
+        for user_df in self.iter_user_event_frames(zip_path, interval_minutes=interval_minutes):
             frames.append(user_df)
 
         if not frames:

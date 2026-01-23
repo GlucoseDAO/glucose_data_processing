@@ -11,7 +11,7 @@ This script processes glucose monitoring data for ML training by:
 """
 
 import polars as pl
-from typing import Tuple, Dict, Any, List, Optional, Iterable
+from typing import Tuple, Dict, Any, List, Optional, Iterable, Union, cast
 from datetime import datetime
 from pathlib import Path
 from loguru import logger
@@ -30,6 +30,7 @@ from formats.base_converter import CSVFormatConverter
 from processing.core.fields import StandardFieldNames, INTERPOLATED_EVENT_TYPE
 from processing.core.config import extract_field_categories, get_schema_file
 from processing.steps.gap_detection import GapDetector
+from processing.steps.data_cleaning import DataCleaner
 from processing.steps.interpolation import ValueInterpolator
 from processing.steps.filtering import SequenceFilter
 from processing.steps.fixed_frequency import FixedFreqGenerator
@@ -61,6 +62,7 @@ def _run_processing_pipeline(
     last_sequence_id: int,
     field_categories_dict: Optional[Dict[str, Any]],
     gap_detector: GapDetector,
+    data_cleaner: DataCleaner,
     interpolator: ValueInterpolator,
     filter_step: SequenceFilter,
     fixed_freq_generator: FixedFreqGenerator,
@@ -73,13 +75,15 @@ def _run_processing_pipeline(
     """
     Common processing pipeline used by both sequential and parallel processing modes.
     Steps:
-    2. Gap detection and sequence creation
-    3. Interpolation
-    4. Filtering by length
-    5. Fixed-frequency data creation
-    6. Filtering to glucose-only data
-    7. ML data preparation
+    2. Data cleaning (removing covariates in large glucose gaps)
+    3. Gap detection and sequence creation
+    4. Interpolation
+    5. Filtering by length
+    6. Fixed-frequency data creation
+    7. Filtering to glucose-only data
+    8. ML data preparation
     """
+    cleaning_stats = {}
     gap_stats = {}
     interp_stats = {}
     filter_stats = {}
@@ -87,60 +91,67 @@ def _run_processing_pipeline(
     glucose_filter_stats = {}
 
     # Internal helper to handle early exit with data preparation
-    def early_exit(current_df: pl.DataFrame, g_stats, i_stats, f_stats, ff_stats, gf_stats, last_seq_id):
+    def early_exit(current_df: pl.DataFrame, c_stats, g_stats, i_stats, f_stats, ff_stats, gf_stats, last_seq_id):
         # Always prepare data (cast and rename) for consistent output even on early exit
         ml_df = ml_preparer.prepare_ml_data(current_df, field_categories_dict)
-        stats = stats_manager.get_statistics(ml_df, g_stats, i_stats, f_stats, gf_stats, ff_stats)
+        stats = stats_manager.get_statistics(ml_df, g_stats, i_stats, f_stats, gf_stats, ff_stats, cleaning_stats=c_stats)
         return ml_df, stats, last_seq_id
 
     if last_step == 1:
         if StandardFieldNames.SEQUENCE_ID not in df.columns:
             df = df.with_columns(pl.lit(0).alias(StandardFieldNames.SEQUENCE_ID))
-        return early_exit(df, gap_stats, interp_stats, filter_stats, fixed_freq_stats, glucose_filter_stats, last_sequence_id)
+        return early_exit(df, cleaning_stats, gap_stats, interp_stats, filter_stats, fixed_freq_stats, glucose_filter_stats, last_sequence_id)
 
-    # STEP 2: Detecting gaps and creating sequences
+    # STEP 2: Data cleaning (removing covariates in large glucose gaps)
     if log_steps:
-        logger.info("STEP 2: Detecting gaps and creating sequences...")
-    df, gap_stats, last_sequence_id = gap_detector.detect_gaps_and_sequences(df, last_sequence_id, field_categories_dict)
+        logger.info("STEP 2: Data cleaning (removing covariates in large glucose gaps)...")
+    df, cleaning_stats = data_cleaner.clean_remote_data(df, field_categories_dict)
     if last_step == 2:
-        return early_exit(df, gap_stats, interp_stats, filter_stats, fixed_freq_stats, glucose_filter_stats, last_sequence_id)
-    
-    # STEP 3: Interpolating missing values
+        return early_exit(df, cleaning_stats, gap_stats, interp_stats, filter_stats, fixed_freq_stats, glucose_filter_stats, last_sequence_id)
+
+    # STEP 3: Detecting gaps and creating sequences
     if log_steps:
-        logger.info("STEP 3: Interpolating missing values...")
-    df, interp_stats = interpolator.interpolate_missing_values(df, field_categories_dict)
+        logger.info("STEP 3: Detecting gaps and creating sequences...")
+    df, gap_stats, last_sequence_id = gap_detector.detect_gaps_and_sequences(df, last_sequence_id, field_categories_dict)
     if last_step == 3:
-        return early_exit(df, gap_stats, interp_stats, filter_stats, fixed_freq_stats, glucose_filter_stats, last_sequence_id)
+        return early_exit(df, cleaning_stats, gap_stats, interp_stats, filter_stats, fixed_freq_stats, glucose_filter_stats, last_sequence_id)
     
-    # STEP 4: Filtering sequences by minimum length
+    # STEP 4: Interpolating missing values
     if log_steps:
-        logger.info("STEP 4: Filtering sequences by minimum length...")
-    df, filter_stats = filter_step.filter_sequences_by_length(df)
+        logger.info("STEP 4: Interpolating missing values...")
+    df, interp_stats = interpolator.interpolate_missing_values(df, field_categories_dict)
     if last_step == 4:
-        return early_exit(df, gap_stats, interp_stats, filter_stats, fixed_freq_stats, glucose_filter_stats, last_sequence_id)
+        return early_exit(df, cleaning_stats, gap_stats, interp_stats, filter_stats, fixed_freq_stats, glucose_filter_stats, last_sequence_id)
     
-    # STEP 5: Creating fixed-frequency data
+    # STEP 5: Filtering sequences by minimum length
+    if log_steps:
+        logger.info("STEP 5: Filtering sequences by minimum length...")
+    df, filter_stats = filter_step.filter_sequences_by_length(df)
+    if last_step == 5:
+        return early_exit(df, cleaning_stats, gap_stats, interp_stats, filter_stats, fixed_freq_stats, glucose_filter_stats, last_sequence_id)
+    
+    # STEP 6: Creating fixed-frequency data
     if create_fixed_frequency:
         if log_steps:
-            logger.info("STEP 5: Creating fixed-frequency data...")
+            logger.info("STEP 6: Creating fixed-frequency data...")
         df, fixed_freq_stats = fixed_freq_generator.create_fixed_frequency_data(df, field_categories_dict)
-    if last_step == 5:
-        return early_exit(df, gap_stats, interp_stats, filter_stats, fixed_freq_stats, glucose_filter_stats, last_sequence_id)
-    
-    # STEP 6: Filtering to glucose-only data
-    if log_steps:
-        logger.info("STEP 6: Filtering to glucose-only data...")
-    df, glucose_filter_stats = filter_step.filter_glucose_only(df)
     if last_step == 6:
-        return early_exit(df, gap_stats, interp_stats, filter_stats, fixed_freq_stats, glucose_filter_stats, last_sequence_id)
+        return early_exit(df, cleaning_stats, gap_stats, interp_stats, filter_stats, fixed_freq_stats, glucose_filter_stats, last_sequence_id)
     
-    # STEP 7: Preparing final ML dataset
+    # STEP 7: Filtering to glucose-only data
     if log_steps:
-        logger.info("STEP 7: Preparing final ML dataset...")
+        logger.info("STEP 7: Filtering to glucose-only data...")
+    df, glucose_filter_stats = filter_step.filter_glucose_only(df)
+    if last_step == 7:
+        return early_exit(df, cleaning_stats, gap_stats, interp_stats, filter_stats, fixed_freq_stats, glucose_filter_stats, last_sequence_id)
+    
+    # STEP 8: Preparing final ML dataset
+    if log_steps:
+        logger.info("STEP 8: Preparing final ML dataset...")
     ml_df = ml_preparer.prepare_ml_data(df, field_categories_dict)
     
     stats = stats_manager.get_statistics(
-        ml_df, gap_stats, interp_stats, filter_stats, glucose_filter_stats, fixed_freq_stats
+        ml_df, gap_stats, interp_stats, filter_stats, glucose_filter_stats, fixed_freq_stats, cleaning_stats=cleaning_stats
     )
     
     return ml_df, stats, last_sequence_id
@@ -160,6 +171,9 @@ def _process_user_frame_task(
         calibration_period_minutes=params['calibration_period_minutes'],
         remove_after_calibration_hours=params['remove_after_calibration_hours']
     )
+    data_cleaner = DataCleaner(
+        small_gap_max_minutes=params['small_gap_max_minutes']
+    )
     interpolator = ValueInterpolator(
         expected_interval_minutes=params['expected_interval_minutes'],
         small_gap_max_minutes=params['small_gap_max_minutes']
@@ -178,7 +192,7 @@ def _process_user_frame_task(
     # Start with sequence ID 0 for local count
     ml_df, user_stats, user_max_id = _run_processing_pipeline(
         user_df, 0, field_categories_dict,
-        gap_detector, interpolator, filter_step, fixed_freq_generator, ml_preparer, stats_manager,
+        gap_detector, data_cleaner, interpolator, filter_step, fixed_freq_generator, ml_preparer, stats_manager,
         params['create_fixed_frequency'],
         last_step=params.get('last_step', 0)
     )
@@ -273,6 +287,9 @@ class GlucoseMLPreprocessor:
             calibration_period_minutes=calibration_period_minutes,
             remove_after_calibration_hours=remove_after_calibration_hours
         )
+        self.data_cleaner = DataCleaner(
+            small_gap_max_minutes=small_gap_max_minutes
+        )
         self.interpolator = ValueInterpolator(
             expected_interval_minutes=expected_interval_minutes,
             small_gap_max_minutes=small_gap_max_minutes
@@ -366,7 +383,7 @@ class GlucoseMLPreprocessor:
             for standard_name in schema.get("field_categories", {}).keys():
                 if standard_name == seq_id_col:
                     continue
-                extra.add(field_to_display.get(standard_name, standard_name))
+                extra.add(str(field_to_display.get(standard_name, standard_name)))
 
         for c in sorted(extra):
             if c not in set(cols):
@@ -507,7 +524,9 @@ class GlucoseMLPreprocessor:
             max_active_tasks = max_workers * 2
             futures = []
             
-            for user_df in iter_fn(data_folder, interval_minutes=self.expected_interval_minutes):
+            # Cast iter_fn to the expected callable type for the linter
+            typed_iter_fn = cast(Iterable[pl.DataFrame], iter_fn(data_folder, interval_minutes=self.expected_interval_minutes))
+            for user_df in typed_iter_fn:
                 if len(user_df) == 0:
                     continue
                 
@@ -564,6 +583,10 @@ class GlucoseMLPreprocessor:
         self.stats_manager.original_record_count = len(df)
         return df
 
+    def clean_remote_data(self, df: pl.DataFrame, field_categories_dict: Optional[Dict[str, Any]] = None) -> Tuple[pl.DataFrame, Dict[str, Any]]:
+        """Wrapper for DataCleaner.clean_remote_data."""
+        return self.data_cleaner.clean_remote_data(df, field_categories_dict)
+
     def detect_gaps_and_sequences(self, df: pl.DataFrame, last_sequence_id: int = 0, field_categories_dict: Optional[Dict[str, Any]] = None) -> Tuple[pl.DataFrame, Dict[str, Any], int]:
         """Wrapper for GapDetector.detect_gaps_and_sequences."""
         return self.gap_detector.detect_gaps_and_sequences(df, last_sequence_id, field_categories_dict)
@@ -618,10 +641,10 @@ class GlucoseMLPreprocessor:
         logger.info("STEP 1: Consolidating CSV files (mandatory step)...")
         df = self.consolidate_glucose_data(csv_folder)
         
-        # Use common processing pipeline for steps 2-7 (handles last_step internally)
+        # Use common processing pipeline for steps 2-8 (handles last_step internally)
         ml_df, stats, last_sequence_id = _run_processing_pipeline(
             df, last_sequence_id, field_categories_dict,
-            self.gap_detector, self.interpolator, self.filter_step, self.fixed_freq_generator, self.ml_preparer, self.stats_manager,
+            self.gap_detector, self.data_cleaner, self.interpolator, self.filter_step, self.fixed_freq_generator, self.ml_preparer, self.stats_manager,
             self.create_fixed_frequency,
             log_steps=True,
             last_step=self.last_step
@@ -693,7 +716,9 @@ class GlucoseMLPreprocessor:
             for idx, (csv_folder, db_type, converter) in enumerate(zip(csv_folders, db_types, converters), 1):
                 if converter is not None and callable(getattr(converter, "iter_user_event_frames", None)):
                     field_categories_dict = extract_field_categories(db_type) if db_type != "unknown" else None
-                    for user_df in converter.iter_user_event_frames(csv_folder, interval_minutes=self.expected_interval_minutes):
+                    # Use getattr to avoid linter error on base class attribute access
+                    iter_fn = getattr(converter, "iter_user_event_frames")
+                    for user_df in iter_fn(csv_folder, interval_minutes=self.expected_interval_minutes):
                         if len(user_df) == 0:
                             continue
                         
@@ -715,7 +740,7 @@ class GlucoseMLPreprocessor:
                         # Use common processing pipeline (handles last_step internally)
                         ml_df, user_stats, current_last_sequence_id = _run_processing_pipeline(
                             user_df, current_last_sequence_id, field_categories_dict,
-                            self.gap_detector, self.interpolator, self.filter_step, self.fixed_freq_generator, self.ml_preparer, self.stats_manager,
+                            self.gap_detector, self.data_cleaner, self.interpolator, self.filter_step, self.fixed_freq_generator, self.ml_preparer, self.stats_manager,
                             self.create_fixed_frequency,
                             last_step=self.last_step
                         )
@@ -790,7 +815,10 @@ class GlucoseMLPreprocessor:
             stats['database_info'] = {
                 'database_index': idx,
                 'database_path': str(csv_folder),
-                'sequence_id_range': {'min': int(min_seq_id) if min_seq_id is not None else current_last_sequence_id, 'max': int(max_seq_id) if max_seq_id is not None else current_last_sequence_id}
+                'sequence_id_range': {
+                    'min': int(cast(Any, min_seq_id)) if min_seq_id is not None else current_last_sequence_id, 
+                    'max': int(cast(Any, max_seq_id)) if max_seq_id is not None else current_last_sequence_id
+                }
             }
             all_dataframes.append(ml_df)
             all_statistics.append(stats)

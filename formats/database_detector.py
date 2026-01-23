@@ -7,7 +7,7 @@ database types and returns the appropriate database converter.
 """
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 import zipfile
 
 from formats.database_converters import DatabaseConverter
@@ -52,7 +52,7 @@ class DatabaseDetector:
             return LoopDatabaseConverter
         return None
 
-    def detect_database_type(self, data_folder: str) -> str:
+    def detect_database_type(self, data_folder: Union[str, Path]) -> str:
         """
         Detect the database type from the folder structure and file patterns.
         
@@ -190,7 +190,7 @@ class DatabaseDetector:
         # Determine the most likely database type
         if max(file_patterns.values()) == 0:
             # If no pattern matched, check directory name
-            if 'medtronic' in data_folder.lower():
+            if 'medtronic' in str(data_folder).lower():
                 return 'medtronic'
             return 'unknown'
         

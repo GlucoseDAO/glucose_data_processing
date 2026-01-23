@@ -7,7 +7,7 @@ processing to handle very large datasets efficiently.
 """
 
 from pathlib import Path
-from typing import List, Optional, Dict, Any, Iterable
+from typing import List, Optional, Dict, Any, Iterable, Union
 import polars as pl
 from loguru import logger
 
@@ -22,7 +22,7 @@ class LoopDatabaseConverter(DatabaseConverter):
         """Get the name of the database type."""
         return "Loop Database"
 
-    def consolidate_data(self, data_folder: str, output_file: Optional[str] = None) -> pl.DataFrame:
+    def consolidate_data(self, data_folder: Union[str, Path], output_file: Optional[Union[str, Path]] = None) -> pl.DataFrame:
         """
         Consolidate Loop data by iterating per-user frames.
         
@@ -46,7 +46,7 @@ class LoopDatabaseConverter(DatabaseConverter):
             
         return df
 
-    def iter_user_event_frames(self, data_folder: str, *, interval_minutes: int) -> Iterable[pl.DataFrame]:
+    def iter_user_event_frames(self, data_folder: Union[str, Path], *, interval_minutes: int) -> Iterable[pl.DataFrame]:
         """
         Yield per-user DataFrames from Loop dataset.
         

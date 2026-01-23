@@ -188,27 +188,7 @@ def main(
         
         validated_folders.append(input_folder)
     
-    # Initialize preprocessor info
-    if verbose:
-        logger.info("Initializing glucose data preprocessor...")
-        if len(validated_folders) == 1:
-            logger.info(f"   Input folder: {validated_folders[0]}")
-        else:
-            logger.info(f"   Input folders ({len(validated_folders)}):")
-            for i, folder in enumerate(validated_folders, 1):
-                logger.info(f"      {i}. {folder}")
-        logger.info(f"   Output file: {final_output_file}")
-        logger.info(f"   Time interval: {interval_minutes} minutes")
-        logger.info(f"   Gap max: {gap_max_minutes} minutes")
-        logger.info(f"   Min sequence length: {min_sequence_len}")
-        logger.info(f"   Remove calibration events: {remove_calibration}")
-        logger.info(f"   Calibration period: {calibration_period_minutes} minutes")
-        logger.info(f"   Remove after calibration: {remove_after_calibration_hours} hours")
-        logger.info(f"   Save intermediate files: {save_intermediate_files}")
-        logger.info(f"   Glucose only mode: {glucose_only}")
-        logger.info(f"   Fixed-frequency data: {create_fixed_frequency}")
-        logger.info(f"   Last step: {last_step if last_step > 0 else 'All'}")
-    
+    # Initialize preprocessor info        
     try:
         resolved_config_file = _resolve_config_file(config_file)
         if verbose and resolved_config_file and not config_file:
@@ -254,6 +234,24 @@ def main(
 
         # Process data
         if verbose:
+            logger.info("Initializing glucose data preprocessor...")
+            if len(validated_folders) == 1:
+                logger.info(f"   Input folder: {validated_folders[0]}")
+            else:
+                logger.info(f"   Input folders ({len(validated_folders)}):")
+                for i, folder in enumerate(validated_folders, 1):
+                    logger.info(f"      {i}. {folder}")
+            logger.info(f"   Output file: {final_output_file}")
+            logger.info(f"   Time interval: {interval_minutes} minutes")
+            logger.info(f"   Gap max: {gap_max_minutes} minutes")
+            logger.info(f"   Min sequence length: {min_sequence_len}")
+            logger.info(f"   Remove calibration events: {remove_calibration}")
+            logger.info(f"   Calibration period: {calibration_period_minutes} minutes")
+            logger.info(f"   Remove after calibration: {remove_after_calibration_hours} hours")
+            logger.info(f"   Save intermediate files: {save_intermediate_files}")
+            logger.info(f"   Glucose only mode: {glucose_only}")
+            logger.info(f"   Fixed-frequency data: {create_fixed_frequency}")
+            logger.info(f"   Last step: {last_step if last_step > 0 else 'All'}")
             if len(validated_folders) == 1:
                 logger.info("Starting glucose data processing pipeline...")
             else:

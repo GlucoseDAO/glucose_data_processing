@@ -6,7 +6,7 @@ This module provides the converter for the UC_HT dataset (multi-user, Excel-base
 """
 
 from pathlib import Path
-from typing import Dict, List, Optional, Iterable
+from typing import Dict, List, Optional, Iterable, Union
 import polars as pl
 from loguru import logger
 
@@ -20,7 +20,7 @@ class UCHTDatabaseConverter(DatabaseConverter):
     def get_database_name(self) -> str:
         return "UC_HT Database"
 
-    def consolidate_data(self, data_folder: str, output_file: Optional[str] = None) -> pl.DataFrame:
+    def consolidate_data(self, data_folder: Union[str, Path], output_file: Optional[Union[str, Path]] = None) -> pl.DataFrame:
         """
         Consolidate data from the UC_HT database folder.
         """
@@ -52,10 +52,11 @@ class UCHTDatabaseConverter(DatabaseConverter):
             
         return df
 
-    def iter_user_event_frames(self, data_path: Path, *, interval_minutes: int) -> Iterable[pl.DataFrame]:
+    def iter_user_event_frames(self, data_path: Union[str, Path], *, interval_minutes: int) -> Iterable[pl.DataFrame]:
         """
         Iterate through users and yield resampled event frames.
         """
+        data_path = Path(data_path)
         # Check if this folder itself is a user directory (contains modality files)
         modality_filenames = ['Glucose.xlsx', 'Heart Rate.xlsx', 'Steps.xlsx', 'Carbohidrates.xlsx', 'Insulin.xlsx', 'IGAR.xlsx']
         is_user_dir = any((data_path / f).exists() for f in modality_filenames)

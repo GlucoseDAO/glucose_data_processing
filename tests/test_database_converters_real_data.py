@@ -42,7 +42,7 @@ class TestDatabaseDetection:
             pytest.skip("HUPA data not available")
         
         detector = DatabaseDetector()
-        db_type = detector.detect_database_type(str(hupa_path))
+        db_type = detector.detect_database_type(hupa_path)
         assert db_type == "hupa", f"Expected 'hupa', got '{db_type}'"
 
     def test_detect_uom_database(self) -> None:
@@ -52,7 +52,7 @@ class TestDatabaseDetection:
             pytest.skip("UoM data not available")
         
         detector = DatabaseDetector()
-        db_type = detector.detect_database_type(str(uom_path))
+        db_type = detector.detect_database_type(uom_path)
         assert db_type == "uom", f"Expected 'uom', got '{db_type}'"
 
     def test_detect_medtronic_database(self) -> None:
@@ -62,7 +62,7 @@ class TestDatabaseDetection:
             pytest.skip("Medtronic data not available")
         
         detector = DatabaseDetector()
-        db_type = detector.detect_database_type(str(medtronic_path))
+        db_type = detector.detect_database_type(medtronic_path)
         assert db_type == "medtronic", f"Expected 'medtronic', got '{db_type}'"
 
     def test_detect_minidose1_database(self) -> None:
@@ -72,7 +72,7 @@ class TestDatabaseDetection:
             pytest.skip("MiniDose1 data not available")
         
         detector = DatabaseDetector()
-        db_type = detector.detect_database_type(str(minidose_path))
+        db_type = detector.detect_database_type(minidose_path)
         assert db_type == "minidose1", f"Expected 'minidose1', got '{db_type}'"
 
     def test_detect_loop_database(self) -> None:
@@ -82,7 +82,7 @@ class TestDatabaseDetection:
             pytest.skip("Loop data not available")
         
         detector = DatabaseDetector()
-        db_type = detector.detect_database_type(str(loop_path))
+        db_type = detector.detect_database_type(loop_path)
         assert db_type == "loop", f"Expected 'loop', got '{db_type}'"
 
     def test_detect_uc_ht_database(self) -> None:
@@ -92,7 +92,7 @@ class TestDatabaseDetection:
             pytest.skip("UC_HT data not available")
         
         detector = DatabaseDetector()
-        db_type = detector.detect_database_type(str(uc_ht_path))
+        db_type = detector.detect_database_type(uc_ht_path)
         assert db_type == "uc_ht", f"Expected 'uc_ht', got '{db_type}'"
 
 
@@ -111,7 +111,7 @@ class TestHUPAConverter:
         config = {"first_n_users": 2}  # Limit to 2 users for faster testing
         converter = HupaDatabaseConverter(config, database_type="hupa")
         
-        df = converter.consolidate_data(str(hupa_path))
+        df = converter.consolidate_data(hupa_path)
         
         assert len(df) > 0, "Should have records"
         assert "timestamp" in df.columns, "Should have timestamp column"
@@ -123,7 +123,7 @@ class TestHUPAConverter:
         config = {"first_n_users": 1}
         converter = HupaDatabaseConverter(config, database_type="hupa")
         
-        df = converter.consolidate_data(str(hupa_path))
+        df = converter.consolidate_data(hupa_path)
         
         # Check timestamp column is datetime type
         assert df["timestamp"].dtype == pl.Datetime, f"Expected Datetime, got {df['timestamp'].dtype}"
@@ -137,7 +137,7 @@ class TestHUPAConverter:
         config = {"first_n_users": 3}
         converter = HupaDatabaseConverter(config, database_type="hupa")
         
-        df = converter.consolidate_data(str(hupa_path))
+        df = converter.consolidate_data(hupa_path)
         
         unique_users = df["user_id"].unique().to_list()
         assert len(unique_users) > 0, "Should have at least one user"
@@ -161,7 +161,7 @@ class TestUoMConverter:
         config = {"first_n_users": 2}
         converter = UoMDatabaseConverter(config, database_type="uom")
         
-        df = converter.consolidate_data(str(uom_path))
+        df = converter.consolidate_data(uom_path)
         
         assert len(df) > 0, "Should have records"
         assert "timestamp" in df.columns, "Should have timestamp column"
@@ -172,7 +172,7 @@ class TestUoMConverter:
         config = {"first_n_users": 1}
         converter = UoMDatabaseConverter(config, database_type="uom")
         
-        df = converter.consolidate_data(str(uom_path))
+        df = converter.consolidate_data(uom_path)
         
         # UoM should have glucose values
         assert "glucose_value_mgdl" in df.columns, "Should have glucose column"
@@ -202,7 +202,7 @@ class TestMedtronicConverter:
         config = {}
         converter = MedtronicDatabaseConverter(config, database_type="medtronic")
         
-        df = converter.consolidate_data(str(medtronic_path))
+        df = converter.consolidate_data(medtronic_path)
         
         assert len(df) > 0, "Should have records"
         assert "timestamp" in df.columns, "Should have timestamp column"
@@ -212,7 +212,7 @@ class TestMedtronicConverter:
         config = {}
         converter = MedtronicDatabaseConverter(config, database_type="medtronic")
         
-        df = converter.consolidate_data(str(medtronic_path))
+        df = converter.consolidate_data(medtronic_path)
         
         # Check timestamp column is datetime type
         assert df["timestamp"].dtype == pl.Datetime, f"Expected Datetime, got {df['timestamp'].dtype}"
@@ -233,7 +233,7 @@ class TestMinidose1Converter:
         config = {}
         converter = Minidose1DatabaseConverter(config, database_type="minidose1")
         
-        df = converter.consolidate_data(str(minidose_path))
+        df = converter.consolidate_data(minidose_path)
         
         assert len(df) > 0, "Should have records"
         assert "timestamp" in df.columns, "Should have timestamp column"
@@ -243,7 +243,7 @@ class TestMinidose1Converter:
         config = {}
         converter = Minidose1DatabaseConverter(config, database_type="minidose1")
         
-        df = converter.consolidate_data(str(minidose_path))
+        df = converter.consolidate_data(minidose_path)
         
         # Check glucose column exists
         assert "glucose_value_mgdl" in df.columns, "Should have glucose column"
@@ -264,7 +264,7 @@ class TestLoopConverter:
         config = {"first_n_users": 2, "expected_interval_minutes": 5}
         converter = LoopDatabaseConverter(config, database_type="loop")
         
-        df = converter.consolidate_data(str(loop_path))
+        df = converter.consolidate_data(loop_path)
         
         assert len(df) > 0, "Should have records"
         assert "timestamp" in df.columns, "Should have timestamp column"
@@ -277,7 +277,7 @@ class TestLoopConverter:
         
         user_count = 0
         total_records = 0
-        for user_df in converter.iter_user_event_frames(str(loop_path), interval_minutes=5):
+        for user_df in converter.iter_user_event_frames(loop_path, interval_minutes=5):
             user_count += 1
             total_records += len(user_df)
             
@@ -293,7 +293,7 @@ class TestLoopConverter:
         config = {"first_n_users": 3}
         converter = LoopDatabaseConverter(config, database_type="loop")
         
-        df = converter.consolidate_data(str(loop_path))
+        df = converter.consolidate_data(loop_path)
         
         assert "event_type" in df.columns, "Should have event_type column"
         event_types = df["event_type"].unique().to_list()
@@ -306,7 +306,7 @@ class TestLoopConverter:
         config = {"first_n_users": 2}
         converter = LoopDatabaseConverter(config, database_type="loop")
         
-        df = converter.consolidate_data(str(loop_path))
+        df = converter.consolidate_data(loop_path)
         
         # Check for duplicates on (user_id, timestamp, event_type)
         dups = df.group_by(["user_id", "timestamp", "event_type"]).len().filter(pl.col("len") > 1)
@@ -328,7 +328,7 @@ class TestUCHTConverter:
         config = {"first_n_users": 2, "expected_interval_minutes": 5}
         converter = UCHTDatabaseConverter(config, database_type="uc_ht")
         
-        df = converter.consolidate_data(str(uc_ht_path))
+        df = converter.consolidate_data(uc_ht_path)
         
         assert len(df) > 0, "Should have records"
         assert "timestamp" in df.columns, "Should have timestamp column"
@@ -357,7 +357,7 @@ class TestUCHTConverter:
         config = {"first_n_users": 1}
         converter = UCHTDatabaseConverter(config, database_type="uc_ht")
         
-        df = converter.consolidate_data(str(uc_ht_path))
+        df = converter.consolidate_data(uc_ht_path)
         
         # UC_HT should have glucose values
         assert "glucose_value_mgdl" in df.columns, "Should have glucose column"
@@ -373,14 +373,14 @@ class TestEndToEndWithDatabaseDetector:
             pytest.skip("HUPA data not available")
         
         detector = DatabaseDetector()
-        db_type = detector.detect_database_type(str(hupa_path))
+        db_type = detector.detect_database_type(hupa_path)
         
         config = {"first_n_users": 1}
         converter = detector.get_database_converter(db_type, config)
         
         assert converter is not None, f"Should get converter for {db_type}"
         
-        df = converter.consolidate_data(str(hupa_path))
+        df = converter.consolidate_data(hupa_path)
         assert len(df) > 0, "Should produce data"
 
     def test_uom_end_to_end(self) -> None:
@@ -390,14 +390,14 @@ class TestEndToEndWithDatabaseDetector:
             pytest.skip("UoM data not available")
         
         detector = DatabaseDetector()
-        db_type = detector.detect_database_type(str(uom_path))
+        db_type = detector.detect_database_type(uom_path)
         
         config = {"first_n_users": 1}
         converter = detector.get_database_converter(db_type, config)
         
         assert converter is not None, f"Should get converter for {db_type}"
         
-        df = converter.consolidate_data(str(uom_path))
+        df = converter.consolidate_data(uom_path)
         assert len(df) > 0, "Should produce data"
 
     def test_loop_end_to_end(self) -> None:
@@ -407,7 +407,7 @@ class TestEndToEndWithDatabaseDetector:
             pytest.skip("Loop data not available")
         
         detector = DatabaseDetector()
-        db_type = detector.detect_database_type(str(loop_path))
+        db_type = detector.detect_database_type(loop_path)
         
         config = {"first_n_users": 2}
         converter = detector.get_database_converter(db_type, config)
@@ -415,5 +415,5 @@ class TestEndToEndWithDatabaseDetector:
         assert converter is not None, f"Should get converter for {db_type}"
         assert hasattr(converter, "iter_user_event_frames"), "Loop should have streaming method"
         
-        df = converter.consolidate_data(str(loop_path))
+        df = converter.consolidate_data(loop_path)
         assert len(df) > 0, "Should produce data"
