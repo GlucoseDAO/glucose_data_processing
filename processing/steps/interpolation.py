@@ -4,7 +4,7 @@ import polars as pl
 from typing import Tuple, Dict, Any, List, Optional
 from datetime import datetime, timedelta
 from loguru import logger
-from processing.core.fields import StandardFieldNames, INTERPOLATED_EVENT_TYPE
+from processing.core.fields import StandardFieldNames, INTERPOLATED_EVENT_TYPE, INSERTED_EVENT_TYPE
 
 class ValueInterpolator:
     """
@@ -78,11 +78,10 @@ class ValueInterpolator:
         # Step 1: For each continuous field, fill missing values at existing timestamps
         # This fills nulls in continuous fields where other modalities might have data
         for field in fields_to_interpolate:
-            # We use vectorized interpolation restricted by gap size
+            # Vectorized interpolation restricted by gap size
             ts_at_non_null = pl.when(pl.col(field).is_not_null()).then(pl.col(ts_col)).otherwise(None)
             
             # Calculate gap size for each null point by looking at nearest non-null neighbors
-            # gap_size = (next_non_null_ts - prev_non_null_ts)
             gap_size = (
                 ts_at_non_null.backward_fill().over(seq_id_col) - 
                 ts_at_non_null.forward_fill().over(seq_id_col)
@@ -94,27 +93,32 @@ class ValueInterpolator:
             # Linear interpolation
             interpolated_values = pl.col(field).interpolate().over(seq_id_col)
             
-            # Update only null values within small gaps
-            null_mask = pl.col(field).is_null()
-            df = df.with_columns([
-                pl.when(null_mask & is_small_gap)
+            # We want to mark rows as interpolated only if they were null, within a small gap,
+            # and the interpolation actually produced a non-null value.
+            # CRITICAL: We evaluate this before updating the column to avoid null_mask becoming false.
+            will_be_filled = pl.col(field).is_null() & is_small_gap & (interpolated_values.is_not_null())
+            
+            # Update statistics using the condition before we update the dataframe
+            interpolated_count = df.select(will_be_filled.sum()).item()
+            per_field_interpolations[field] = int(interpolated_count) if interpolated_count is not None else 0
+
+            update_exprs = [
+                pl.when(pl.col(field).is_null() & is_small_gap)
                 .then(interpolated_values)
                 .otherwise(pl.col(field))
-                .alias(field),
-            ])
+                .alias(field)
+            ]
             
-            # Update event type for interpolated values
+            # Update event type for interpolated values if column exists
             if event_type_col in df.columns:
-                df = df.with_columns([
-                    pl.when(null_mask & is_small_gap & (pl.col(field).is_not_null()))
+                update_exprs.append(
+                    pl.when(will_be_filled)
                     .then(pl.lit(INTERPOLATED_EVENT_TYPE))
                     .otherwise(pl.col(event_type_col))
                     .alias(event_type_col)
-                ])
+                )
             
-            # Update statistics
-            interpolated_count = df.select((null_mask & is_small_gap & (pl.col(field).is_not_null())).sum()).item()
-            per_field_interpolations[field] = int(interpolated_count) if interpolated_count is not None else 0
+            df = df.with_columns(update_exprs)
         
         for field in fields_to_interpolate:
             stats_key = field_stats_keys[field]
@@ -231,7 +235,7 @@ class ValueInterpolator:
                     final_cols.append(pl.col(field))
                 
                 if event_type_col in df.columns:
-                    final_cols.append(pl.lit(INTERPOLATED_EVENT_TYPE).alias(event_type_col))
+                    final_cols.append(pl.lit(INSERTED_EVENT_TYPE).alias(event_type_col))
                 
                 if 'prev_user_id' in gaps_calculated.columns:
                     final_cols.append(
@@ -285,10 +289,23 @@ class ValueInterpolator:
             df = df.sort([user_id_col, seq_id_col, ts_col])
         else:
             df = df.sort([seq_id_col, ts_col])
+            
+        total_rows = len(df)
+        if total_rows > 0:
+            for field in fields_to_interpolate:
+                stats_key = field_stats_keys[field]
+                count = interpolation_stats.get(f'{stats_key}_interpolations', 0)
+                percentage = (count / total_rows) * 100
+                interpolation_stats[f'{stats_key}_interpolations_pct'] = round(percentage, 2)
         
         logger.info(f"Identified and processed {interpolation_stats['small_gaps_filled']} small gaps")
-        logger.info(f"Created {interpolation_stats['total_interpolated_data_points']} interpolated data points")
-        logger.info(f"Interpolated {interpolation_stats['total_interpolations']} glucose values")
+        logger.info(f"Created {interpolation_stats['total_interpolated_data_points']} interpolated (inserted) data points")
+        
+        for field in fields_to_interpolate:
+            count = interpolation_stats.get(f'{field_stats_keys[field]}_interpolations', 0)
+            pct = interpolation_stats.get(f'{field_stats_keys[field]}_interpolations_pct', 0)
+            logger.info(f"Interpolated {field}: {count:,} ({pct}%)")
+            
         logger.info(f"Skipped {interpolation_stats['large_gaps_skipped']} large gaps")
         logger.info(f"Processed {interpolation_stats['sequences_processed']} sequences")
         

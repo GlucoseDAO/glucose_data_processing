@@ -93,13 +93,13 @@ def _run_processing_pipeline(
     # Internal helper to handle early exit with data preparation
     def early_exit(current_df: pl.DataFrame, c_stats, g_stats, i_stats, f_stats, ff_stats, gf_stats, last_seq_id):
         # Always prepare data (cast and rename) for consistent output even on early exit
+        if StandardFieldNames.SEQUENCE_ID not in current_df.columns:
+            current_df = current_df.with_columns(pl.lit(0).alias(StandardFieldNames.SEQUENCE_ID))
         ml_df = ml_preparer.prepare_ml_data(current_df, field_categories_dict)
         stats = stats_manager.get_statistics(ml_df, g_stats, i_stats, f_stats, gf_stats, ff_stats, cleaning_stats=c_stats)
         return ml_df, stats, last_seq_id
 
     if last_step == 1:
-        if StandardFieldNames.SEQUENCE_ID not in df.columns:
-            df = df.with_columns(pl.lit(0).alias(StandardFieldNames.SEQUENCE_ID))
         return early_exit(df, cleaning_stats, gap_stats, interp_stats, filter_stats, fixed_freq_stats, glucose_filter_stats, last_sequence_id)
 
     # STEP 2: Data cleaning (removing covariates in large glucose gaps)
@@ -186,7 +186,7 @@ def _process_user_frame_task(
         expected_interval_minutes=params['expected_interval_minutes']
     )
     ml_preparer = MLDataPreparer(config=params.get('config', {}))
-    stats_manager = StatsManager()
+    stats_manager = StatsManager(original_record_count=len(user_df))
 
     # Process using the common pipeline
     # Start with sequence ID 0 for local count

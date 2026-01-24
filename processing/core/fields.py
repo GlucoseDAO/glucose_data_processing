@@ -4,6 +4,7 @@ from formats.base_converter import CSVFormatConverter
 
 # Constants for common field names and literal values
 INTERPOLATED_EVENT_TYPE = 'Interpolated'
+INSERTED_EVENT_TYPE = 'Inserted'
 
 class StandardFieldNames:
     """

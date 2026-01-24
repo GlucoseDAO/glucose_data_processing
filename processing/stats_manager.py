@@ -3,7 +3,7 @@
 import polars as pl
 from typing import Dict, Any, List, Optional, Union, Sequence
 from loguru import logger
-from processing.core.fields import StandardFieldNames, INTERPOLATED_EVENT_TYPE
+from processing.core.fields import StandardFieldNames, INTERPOLATED_EVENT_TYPE, INSERTED_EVENT_TYPE
 from formats.base_converter import CSVFormatConverter
 from pathlib import Path
 
@@ -122,7 +122,8 @@ class StatsManager:
             'fast_acting_insulin_data_completeness': (1 - df[fast_insulin_col].null_count() / len(df)) * 100 if fast_insulin_col in df.columns and len(df) > 0 else 0,
             'long_acting_insulin_data_completeness': (1 - df[long_insulin_col].null_count() / len(df)) * 100 if long_insulin_col in df.columns and len(df) > 0 else 0,
             'carb_data_completeness': (1 - df[carb_col].null_count() / len(df)) * 100 if carb_col in df.columns and len(df) > 0 else 0,
-            'interpolated_records': df.filter(pl.col(event_type_col) == INTERPOLATED_EVENT_TYPE).height if event_type_col in df.columns else 0
+            'interpolated_records': df.filter(pl.col(event_type_col) == INTERPOLATED_EVENT_TYPE).height if event_type_col in df.columns else 0,
+            'inserted_records': df.filter(pl.col(event_type_col) == INSERTED_EVENT_TYPE).height if event_type_col in df.columns else 0
         }
         
         return stats
@@ -206,7 +207,8 @@ class StatsManager:
                 'glucose_data_completeness': 0,
                 'insulin_data_completeness': 0,
                 'carb_data_completeness': 0,
-                'interpolated_records': 0
+                'interpolated_records': 0,
+                'inserted_records': 0
             }
         }
         
@@ -273,11 +275,13 @@ class StatsManager:
             aggregated['interpolation_analysis']['total_interpolations'] += interp_analysis.get('total_interpolations', 0)
             aggregated['interpolation_analysis']['total_interpolated_data_points'] += interp_analysis.get('total_interpolated_data_points', 0)
             
-            glucose_interps = interp_analysis.get('glucose_value_mgdl_interpolations', 
-                                                  interp_analysis.get('glucose_value_mg/dl_interpolations', 0))
-            aggregated['interpolation_analysis']['glucose_value_mgdl_interpolations'] += glucose_interps
-            aggregated['interpolation_analysis']['insulin_value_u_interpolations'] += interp_analysis.get('insulin_value_u_interpolations', 0)
-            aggregated['interpolation_analysis']['carb_value_grams_interpolations'] += interp_analysis.get('carb_value_grams_interpolations', 0)
+            # Aggregate all field-specific interpolations
+            for key, val in interp_analysis.items():
+                if key.endswith('_interpolations') and key != 'total_interpolations':
+                    if key not in aggregated['interpolation_analysis']:
+                        aggregated['interpolation_analysis'][key] = 0
+                    aggregated['interpolation_analysis'][key] += val
+
             aggregated['interpolation_analysis']['sequences_processed'] += interp_analysis.get('sequences_processed', 0)
             aggregated['interpolation_analysis']['small_gaps_filled'] += interp_analysis.get('small_gaps_filled', 0)
             aggregated['interpolation_analysis']['large_gaps_skipped'] += interp_analysis.get('large_gaps_skipped', 0)
@@ -326,6 +330,7 @@ class StatsManager:
                 aggregated['data_quality']['insulin_data_completeness'] += quality.get('insulin_data_completeness', 0) * recs
                 aggregated['data_quality']['carb_data_completeness'] += quality.get('carb_data_completeness', 0) * recs
                 aggregated['data_quality']['interpolated_records'] += quality.get('interpolated_records', 0)
+                aggregated['data_quality']['inserted_records'] += quality.get('inserted_records', 0)
         
         # Calculate final averages for completeness
         total_agg_recs = aggregated['dataset_overview']['total_records']
@@ -333,6 +338,14 @@ class StatsManager:
             aggregated['data_quality']['glucose_data_completeness'] /= total_agg_recs
             aggregated['data_quality']['insulin_data_completeness'] /= total_agg_recs
             aggregated['data_quality']['carb_data_completeness'] /= total_agg_recs
+            
+            # Recalculate interpolation percentages for aggregated stats
+            interp_agg = aggregated['interpolation_analysis']
+            for key in list(interp_agg.keys()):
+                if key.endswith('_interpolations') and key != 'total_interpolations':
+                    val = interp_agg[key]
+                    pct_key = f"{key}_pct"
+                    interp_agg[pct_key] = round((val / total_agg_recs) * 100, 2)
         
         if 'fixed_frequency_analysis' in aggregated and 'data_density_before' in aggregated['fixed_frequency_analysis']:
             before_density = aggregated['fixed_frequency_analysis']['data_density_before']
@@ -428,12 +441,17 @@ def print_statistics(stats: Dict[str, Any], preprocessor_params: Optional[Dict[s
     if interp_analysis:
         logger.info(f"\nINTERPOLATION ANALYSIS:")
         logger.info(f"   Small Gaps Identified and Processed: {interp_analysis.get('small_gaps_filled', 0):,}")
-        logger.info(f"   Interpolated Data Points Created: {interp_analysis.get('total_interpolated_data_points', 0):,}")
-        logger.info(f"   Total Field Interpolations: {interp_analysis.get('total_interpolations', 0):,}")
+        logger.info(f"   Inserted Data Points Created: {interp_analysis.get('total_interpolated_data_points', 0):,}")
         
-        glucose_interps = interp_analysis.get('glucose_value_mgdl_interpolations', 
-                                              interp_analysis.get('glucose_value_mg/dl_interpolations', 0))
-        logger.info(f"   Glucose Interpolations: {glucose_interps:,}")
+        # Print field-specific interpolations
+        for key, val in interp_analysis.items():
+            if key.endswith('_interpolations') and key != 'total_interpolations':
+                field_name = key.replace('_interpolations', '').replace('_', ' ').title()
+                pct_key = f"{key}_pct"
+                pct = interp_analysis.get(pct_key, 0.0)
+                logger.info(f"   {field_name} Interpolations: {val:,} ({pct}%)")
+        
+        logger.info(f"   Total Field Interpolations: {interp_analysis.get('total_interpolations', 0):,}")
     
     filter_analysis = stats.get('filtering_analysis', {})
     if filter_analysis:
@@ -458,7 +476,8 @@ def print_statistics(stats: Dict[str, Any], preprocessor_params: Optional[Dict[s
     quality = stats.get('data_quality', {})
     logger.info(f"\nDATA QUALITY:")
     logger.info(f"   Glucose Data Completeness: {quality.get('glucose_data_completeness', 0):.1f}%")
-    logger.info(f"   Interpolated Records: {quality.get('interpolated_records', 0):,}")
+    logger.info(f"   Interpolated Records (Existing rows): {quality.get('interpolated_records', 0):,}")
+    logger.info(f"   Inserted Records (New rows): {quality.get('inserted_records', 0):,}")
     
     logger.info("\n" + "="*60)
 
