@@ -31,6 +31,20 @@ class GapDetector:
         """
         Main entry point for gap detection and sequence creation.
         """
+        if df.height == 0:
+            logger.info("Empty dataframe - skipping gap detection")
+            return df, {
+                'total_sequences': 0,
+                'gap_positions': 0,
+                'total_gaps': 0,
+                'sequence_lengths': {},
+                'calibration_period_analysis': {
+                    'calibration_periods_detected': 0,
+                    'sequences_marked_for_removal': 0,
+                    'total_records_marked_for_removal': 0
+                }
+            }, last_sequence_id
+
         logger.info("Detecting gaps and creating sequences...")
         
         ts_col = StandardFieldNames.TIMESTAMP

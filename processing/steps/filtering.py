@@ -18,6 +18,18 @@ class SequenceFilter:
         """
         Filters out sequences shorter than min_sequence_len.
         """
+        seq_id_col = StandardFieldNames.SEQUENCE_ID
+        if df.height == 0 or seq_id_col not in df.columns:
+            logger.info("Empty dataframe or missing sequence_id - skipping sequence filtering")
+            return df, {
+                'original_sequences': 0,
+                'filtered_sequences': 0,
+                'removed_sequences': 0,
+                'original_records': 0,
+                'filtered_records': 0,
+                'removed_records': 0
+            }
+
         logger.info(f"Filtering sequences with length < {self.min_sequence_len}...")
         
         seq_id_col = StandardFieldNames.SEQUENCE_ID
@@ -67,6 +79,16 @@ class SequenceFilter:
         """
         Keep only rows with non-null glucose values and remove other event fields.
         """
+        if df.height == 0:
+            logger.info("Empty dataframe - skipping glucose-only filtering")
+            return df, {
+                'original_records': 0,
+                'glucose_only_enabled': self.glucose_only,
+                'records_after_filtering': 0,
+                'records_removed': 0,
+                'fields_removed': []
+            }
+
         logger.info("Filtering to glucose-only data...")
         
         glucose_col = StandardFieldNames.GLUCOSE_VALUE

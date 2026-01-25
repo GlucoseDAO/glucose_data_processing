@@ -23,6 +23,26 @@ class FixedFreqGenerator:
         """
         Main entry point for fixed-frequency creation.
         """
+        seq_id_col = StandardFieldNames.SEQUENCE_ID
+        if df.height == 0 or seq_id_col not in df.columns:
+            logger.info("Empty dataframe or missing sequence_id - skipping fixed-frequency creation")
+            return df, {
+                'sequences_processed': 0,
+                'total_records_before': 0,
+                'total_records_after': 0,
+                'glucose_interpolations': 0,
+                'carb_shifted_records': 0,
+                'insulin_shifted_records': 0,
+                'time_adjustments': 0,
+                'data_density_before': {
+                    'avg_points_per_interval': 0.0,
+                    'total_intervals': 0,
+                    'total_points': 0
+                },
+                'data_density_after': {},
+                'density_change_explanation': {}
+            }
+
         logger.info(f"Creating fixed-frequency data with {self.expected_interval_minutes}-minute intervals...")
         
         ts_col = StandardFieldNames.TIMESTAMP

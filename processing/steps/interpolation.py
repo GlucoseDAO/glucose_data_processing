@@ -24,6 +24,17 @@ class ValueInterpolator:
         """
         Main entry point for interpolation.
         """
+        seq_id_col = StandardFieldNames.SEQUENCE_ID
+        if df.height == 0 or seq_id_col not in df.columns:
+            logger.info("Empty dataframe or missing sequence_id - skipping interpolation")
+            return df, {
+                'total_interpolations': 0,
+                'total_interpolated_data_points': 0,
+                'sequences_processed': 0,
+                'small_gaps_filled': 0,
+                'large_gaps_skipped': 0
+            }
+
         ts_col = StandardFieldNames.TIMESTAMP
         glucose_col = StandardFieldNames.GLUCOSE_VALUE
         seq_id_col = StandardFieldNames.SEQUENCE_ID
@@ -41,9 +52,10 @@ class ValueInterpolator:
             continuous_fields.append(glucose_col)
         
         fields_to_interpolate = [f for f in continuous_fields if f in df.columns]
+        fill_during_interp_fields = [f for f in field_categories_dict.get('fill_during_interpolation', []) if f in df.columns]
         
-        if not fields_to_interpolate:
-            logger.info("No continuous fields found - skipping interpolation")
+        if not fields_to_interpolate and not fill_during_interp_fields:
+            logger.info("No fields to interpolate or fill found - skipping interpolation")
             return df, {
                 'total_interpolations': 0,
                 'total_interpolated_data_points': 0,
@@ -52,7 +64,10 @@ class ValueInterpolator:
                 'large_gaps_skipped': 0
             }
         
-        logger.info(f"Interpolating small gaps for fields: {', '.join(fields_to_interpolate)}...")
+        if fields_to_interpolate:
+            logger.info(f"Interpolating small gaps for continuous fields: {', '.join(fields_to_interpolate)}...")
+        if fill_during_interp_fields:
+            logger.info(f"Filling constant values for fields: {', '.join(fill_during_interp_fields)}...")
         
         field_safe_names: Dict[str, str] = {}
         field_stats_keys: Dict[str, str] = {}
@@ -75,6 +90,27 @@ class ValueInterpolator:
         interpolation_stats['sequences_processed'] = df[seq_id_col].n_unique()
         per_field_interpolations = {field: 0 for field in fields_to_interpolate}
         
+        # Step 0: Fill fields that should be constant during interpolation if values on both sides match
+        for field in fill_during_interp_fields:
+            # Fill nulls if value before and after are the same within a small gap
+            ts_at_non_null = pl.when(pl.col(field).is_not_null()).then(pl.col(ts_col)).otherwise(None)
+            gap_size = (
+                ts_at_non_null.backward_fill().over(seq_id_col) - 
+                ts_at_non_null.forward_fill().over(seq_id_col)
+            ).dt.total_seconds()
+            is_small_gap = (gap_size > 0) & (gap_size <= self.small_gap_max_seconds)
+            
+            v_prev = pl.col(field).forward_fill().over(seq_id_col)
+            v_next = pl.col(field).backward_fill().over(seq_id_col)
+            
+            # We fill only if v_prev == v_next and they are NOT null
+            df = df.with_columns(
+                pl.when(pl.col(field).is_null() & is_small_gap & (v_prev == v_next) & v_prev.is_not_null())
+                .then(v_prev)
+                .otherwise(pl.col(field))
+                .alias(field)
+            )
+
         # Step 1: For each continuous field, fill missing values at existing timestamps
         # This fills nulls in continuous fields where other modalities might have data
         for field in fields_to_interpolate:
@@ -156,7 +192,16 @@ class ValueInterpolator:
                 safe_name = field_safe_names[field]
                 prev_cols.append(pl.col(field).shift(1).over(seq_id_col).alias(f'prev_{safe_name}'))
             
-            if user_id_col in df_with_gaps.columns:
+            # Use safe names for fill_during_interp fields too
+            fill_field_safe_names: Dict[str, str] = {}
+            for field in fill_during_interp_fields:
+                safe_name = field.replace(" ", "_").replace("(", "").replace(")", "").replace("/", "_") + "_fill"
+                fill_field_safe_names[field] = safe_name
+                prev_cols.append(pl.col(field).shift(1).over(seq_id_col).alias(f'prev_{safe_name}'))
+                # We also need the current value to check if it matches
+                prev_cols.append(pl.col(field).alias(f'curr_{safe_name}'))
+
+            if user_id_col in df_with_gaps.columns and user_id_col not in fill_during_interp_fields:
                 prev_cols.append(pl.col(user_id_col).shift(1).over(seq_id_col).alias('prev_user_id'))
             
             df_with_prev = df_with_gaps.with_columns(prev_cols)
@@ -193,7 +238,14 @@ class ValueInterpolator:
                         pl.col(field).alias(f'curr_{safe_name}'),
                     ])
                 
-                if 'prev_user_id' in gaps_exploded.columns:
+                for field in fill_during_interp_fields:
+                    safe_name = fill_field_safe_names[field]
+                    interpolated_cols.extend([
+                        pl.col(f'prev_{safe_name}'),
+                        pl.col(f'curr_{safe_name}'),
+                    ])
+                
+                if 'prev_user_id' in gaps_exploded.columns and user_id_col not in fill_during_interp_fields:
                     interpolated_cols.append(pl.col('prev_user_id'))
                 
                 gaps_calculated = gaps_exploded.select(interpolated_cols)
@@ -235,9 +287,20 @@ class ValueInterpolator:
                     final_cols.append(pl.col(field))
                 
                 if event_type_col in df.columns:
-                    final_cols.append(pl.lit(INSERTED_EVENT_TYPE).alias(event_type_col))
+                    final_cols.append(pl.lit(INTERPOLATED_EVENT_TYPE).alias(event_type_col))
                 
-                if 'prev_user_id' in gaps_calculated.columns:
+                for field in fill_during_interp_fields:
+                    safe_name = fill_field_safe_names[field]
+                    prev_col = f'prev_{safe_name}'
+                    curr_col = f'curr_{safe_name}'
+                    final_cols.append(
+                        pl.when((pl.col(prev_col) == pl.col(curr_col)) & pl.col(prev_col).is_not_null())
+                        .then(pl.col(prev_col))
+                        .otherwise(None)
+                        .alias(field)
+                    )
+
+                if 'prev_user_id' in gaps_calculated.columns and user_id_col not in fill_during_interp_fields:
                     final_cols.append(
                         pl.when(pl.col('prev_user_id').is_not_null())
                         .then(pl.col('prev_user_id'))
@@ -246,7 +309,7 @@ class ValueInterpolator:
                     )
                 
                 original_schema = df.schema
-                existing_col_names = [ts_col, seq_id_col] + fields_to_interpolate
+                existing_col_names = [ts_col, seq_id_col] + fields_to_interpolate + fill_during_interp_fields
                 if event_type_col in df.columns:
                     existing_col_names.append(event_type_col)
                 if 'prev_user_id' in gaps_calculated.columns:

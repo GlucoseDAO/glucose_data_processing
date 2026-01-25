@@ -90,7 +90,8 @@ def extract_field_categories(database_type: str) -> Dict[str, Any]:
         'continuous': [],
         'occasional': [],
         'service': [],
-        'remove_after_calibration': schema.get('remove_after_calibration', True)
+        'remove_after_calibration': schema.get('remove_after_calibration', True),
+        'fill_during_interpolation': schema.get('fill_during_interpolation', [])
     }
     
     for standard_name, category in field_categories.items():

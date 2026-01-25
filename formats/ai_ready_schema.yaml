@@ -23,6 +23,10 @@ field_categories:
   respiratory_rate: continuous
   oxygen_saturation_percent: continuous
   sleep_level: occasional
+fill_during_interpolation:
+  - user_id
+  - recommended_split
+  - age
 converters:
   cgm_dexcom_g6:
     format: json
