@@ -237,7 +237,8 @@ class GlucoseMLPreprocessor:
             verbose=cli_overrides.get('verbose', False),
             config=config,
             first_n_users=cli_overrides.get('first_n_users', config.get('first_n_users', None)),
-            output_file=cli_overrides.get('output_file', config.get('output_file', None))
+            output_file=cli_overrides.get('output_file', config.get('output_file', None)),
+            print_statistics=cli_overrides.get('print_statistics', config.get('print_statistics', True))
         )
     
     def __init__(
@@ -258,6 +259,7 @@ class GlucoseMLPreprocessor:
         config: Optional[Dict[str, Any]] = None,
         first_n_users: Optional[int] = None,
         output_file: Optional[str] = None,
+        print_statistics: bool = True,
     ) -> None:
         self.expected_interval_minutes = expected_interval_minutes
         self.small_gap_max_minutes = small_gap_max_minutes
@@ -274,6 +276,7 @@ class GlucoseMLPreprocessor:
         self.verbose = verbose
         self.config = config if config is not None else {}
         self.output_file = Path(output_file) if output_file else None
+        self.print_statistics = print_statistics
         if first_n_users is not None:
             self.config['first_n_users'] = first_n_users
         
@@ -481,7 +484,8 @@ class GlucoseMLPreprocessor:
             
             # Remap sequence IDs
             # Use user_max_id for remapping logic even if ml_df is empty or sequences were filtered
-            if len(ml_df) > 0 and seq_id_col in ml_df.columns:
+            if seq_id_col in ml_df.columns:
+                # Always remap if we have sequence IDs, even if frame is empty (for consistency)
                 ml_df = ml_df.with_columns([
                     pl.when(pl.col(seq_id_col) > 0)
                     .then(pl.col(seq_id_col) + current_last_sequence_id)
@@ -490,7 +494,12 @@ class GlucoseMLPreprocessor:
                 ])
             
             current_last_sequence_id += user_max_id
-            total_sequences += user_stats['dataset_overview']['total_sequences']
+            
+            # total_sequences should be the count of FINAL sequences kept
+            if 'filtering_analysis' in user_stats and user_stats['filtering_analysis']:
+                total_sequences += user_stats['filtering_analysis'].get('filtered_sequences', 0)
+            else:
+                total_sequences += user_stats['dataset_overview'].get('total_sequences', 0)
             
             all_user_stats.append(user_stats)
             original_records += user_stats['dataset_overview'].get('original_records', 0)
@@ -552,8 +561,14 @@ class GlucoseMLPreprocessor:
         # Use StatsManager to aggregate all collected user statistics
         if all_user_stats:
             stats = self.stats_manager.aggregate_statistics(all_user_stats, ["Streaming Chunk"] * len(all_user_stats))
+            
+            # If we only have one dataset, don't include multi-database info
+            if "multi_database_info" in stats:
+                del stats["multi_database_info"]
+                
             # Update with overall counts and dates
             stats['dataset_overview']['total_records'] = total_records
+            stats['dataset_overview']['total_sequences'] = total_sequences
             stats['dataset_overview']['original_records'] = original_records
             stats['dataset_overview']['date_range'] = {"start": min_ts or "N/A", "end": max_ts or "N/A"}
         else:

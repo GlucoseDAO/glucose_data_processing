@@ -91,25 +91,25 @@ def main(
         "--output", "-o",
         help="Output file name (will be saved in OUTPUT folder). If not provided, filename is generated from source folder names."
     ),
-    interval_minutes: int = typer.Option(
-        5,
+    interval_minutes: Optional[int] = typer.Option(
+        None,
         "--interval", "-i",
-        help="Time discretization interval in minutes"
+        help="Time discretization interval in minutes (default: 5)"
     ),
-    gap_max_minutes: int = typer.Option(
-        15,
+    gap_max_minutes: Optional[int] = typer.Option(
+        None,
         "--gap-max", "-g",
-        help="Maximum gap size to interpolate in minutes"
+        help="Maximum gap size to interpolate in minutes (default: 15)"
     ),
-    min_sequence_len: int = typer.Option(
-        200,
+    min_sequence_len: Optional[int] = typer.Option(
+        None,
         "--min-length", "-l",
-        help="Minimum sequence length to keep for ML training"
+        help="Minimum sequence length to keep for ML training (default: 200)"
     ),
-    remove_calibration: bool = typer.Option(
-        True,
+    remove_calibration: Optional[bool] = typer.Option(
+        None,
         "--remove-calibration/--keep-calibration",
-        help="Remove calibration events to create interpolatable gaps"
+        help="Remove calibration events to create interpolatable gaps (default: True)"
     ),
     verbose: bool = typer.Option(
         False,
@@ -121,33 +121,33 @@ def main(
         "--stats/--no-stats",
         help="Show processing statistics"
     ),
-    save_intermediate_files: bool = typer.Option(
-        False,
+    save_intermediate_files: Optional[bool] = typer.Option(
+        None,
         "--save-intermediate", "-s",
-        help="Save intermediate files after each processing step"
+        help="Save intermediate files after each processing step (default: False)"
     ),
-    calibration_period_minutes: int = typer.Option(
-        60*2 + 45,  # 2 hours 45 minutes
+    calibration_period_minutes: Optional[int] = typer.Option(
+        None,
         "--calibration-period", "-p",
         help="Gap duration considered as calibration period in minutes (default: 165 minutes)"
     ),
-    remove_after_calibration_hours: int = typer.Option(
-        24,
+    remove_after_calibration_hours: Optional[int] = typer.Option(
+        None,
         "--remove-after-calibration", "-r",
         help="Hours of data to remove after calibration period (default: 24 hours)"
     ),
-    glucose_only: bool = typer.Option(
-        False,
+    glucose_only: Optional[bool] = typer.Option(
+        None,
         "--glucose-only",
         help="Output only glucose data: remove Event Type, Insulin Value, and Carb Value fields, keep only rows with glucose values"
     ),
-    create_fixed_frequency: bool = typer.Option(
-        True,
+    create_fixed_frequency: Optional[bool] = typer.Option(
+        None,
         "--fixed-frequency/--no-fixed-frequency",
         help="Create fixed-frequency data with consistent intervals (default: enabled)"
     ),
-    last_step: int = typer.Option(
-        0,
+    last_step: Optional[int] = typer.Option(
+        None,
         "--last-step",
         help="Last processing step to execute (1-7). 0 means all steps. (default: 0)"
     ),
@@ -196,19 +196,33 @@ def main(
 
         # CLI arguments override config file values
         cli_overrides: Dict[str, Any] = {
-            'expected_interval_minutes': interval_minutes,
-            'small_gap_max_minutes': gap_max_minutes,
-            'remove_calibration': remove_calibration,
-            'min_sequence_len': min_sequence_len,
-            'save_intermediate_files': save_intermediate_files,
-            'calibration_period_minutes': calibration_period_minutes,
-            'remove_after_calibration_hours': remove_after_calibration_hours,
-            'glucose_only': glucose_only,
-            'create_fixed_frequency': create_fixed_frequency,
-            'last_step': last_step,
-            'first_n_users': first_n_users if first_n_users and first_n_users > 0 else None,
-            'verbose': verbose
+            'verbose': verbose,
+            'print_statistics': show_stats
         }
+        
+        # Only add optional overrides if they were explicitly provided via CLI
+        if interval_minutes is not None:
+            cli_overrides['expected_interval_minutes'] = interval_minutes
+        if gap_max_minutes is not None:
+            cli_overrides['small_gap_max_minutes'] = gap_max_minutes
+        if remove_calibration is not None:
+            cli_overrides['remove_calibration'] = remove_calibration
+        if min_sequence_len is not None:
+            cli_overrides['min_sequence_len'] = min_sequence_len
+        if save_intermediate_files is not None:
+            cli_overrides['save_intermediate_files'] = save_intermediate_files
+        if calibration_period_minutes is not None:
+            cli_overrides['calibration_period_minutes'] = calibration_period_minutes
+        if remove_after_calibration_hours is not None:
+            cli_overrides['remove_after_calibration_hours'] = remove_after_calibration_hours
+        if glucose_only is not None:
+            cli_overrides['glucose_only'] = glucose_only
+        if create_fixed_frequency is not None:
+            cli_overrides['create_fixed_frequency'] = create_fixed_frequency
+        if last_step is not None:
+            cli_overrides['last_step'] = last_step
+        if first_n_users is not None and first_n_users > 0:
+            cli_overrides['first_n_users'] = first_n_users
 
         # Create preprocessor
         if resolved_config_file:
@@ -301,54 +315,25 @@ def main(
         logger.info(f"Saved to: {final_output_file}")
         
         # Show statistics if requested
-        if show_stats:
-            if verbose:
-                params = {
-                    'expected_interval_minutes': preprocessor.expected_interval_minutes,
-                    'small_gap_max_minutes': preprocessor.small_gap_max_minutes,
-                    'remove_calibration': preprocessor.remove_calibration,
-                    'min_sequence_len': preprocessor.min_sequence_len,
-                    'calibration_period_minutes': preprocessor.calibration_period_minutes,
-                    'remove_after_calibration_hours': preprocessor.remove_after_calibration_hours,
-                    'create_fixed_frequency': preprocessor.create_fixed_frequency
-                }
-                sm_print_statistics(statistics, params)
-            else:
-                # Show summary statistics only
-                overview = statistics.get('dataset_overview', {})
-                seq_analysis = statistics.get('sequence_analysis', {})
-                logger.info(f"\nSummary:")
-                
-                date_range = overview.get('date_range', {})
-                logger.info(f"   Date range: {date_range.get('start', 'N/A')} to {date_range.get('end', 'N/A')}")
-                logger.info(f"   Longest sequence: {seq_analysis.get('longest_sequence', 0):,} records")
-                
-                seq_lengths = seq_analysis.get('sequence_lengths', {})
-                logger.info(f"   Average sequence: {seq_lengths.get('mean', 0.0):.1f} records")
-                
-                # Show data preservation percentage
-                original_recs = overview.get('original_records', overview.get('total_records', 0))
-                final_recs = overview.get('total_records', 0)
-                preservation_pct = (final_recs / original_recs * 100) if original_recs > 0 else 100
-                logger.info(f"   Data preserved: {preservation_pct:.1f}% ({final_recs:,}/{original_recs:,} records)")
-                
-                # Show interpolation summary
-                interp_analysis = statistics['interpolation_analysis']
-                logger.info(f"   Gaps processed: {interp_analysis.get('small_gaps_filled', 0):,} gaps")
-                logger.info(f"   Data points created: {interp_analysis.get('total_interpolated_data_points', 0):,} points")
-                logger.info(f"   Field interpolations: {interp_analysis.get('total_interpolations', 0):,} values")
-                
-                # Show filtering summary
-                if 'filtering_analysis' in statistics:
-                    filter_analysis = statistics['filtering_analysis']
-                    logger.info(f"   Sequences filtered: {filter_analysis.get('removed_sequences', 0):,} removed")
-                
-                # Show calibration period summary
-                gap_analysis = statistics.get('gap_analysis', {})
-                if 'calibration_period_analysis' in gap_analysis:
-                    calib_analysis = gap_analysis['calibration_period_analysis']
-                    if calib_analysis.get('calibration_periods_detected', 0) > 0:
-                        logger.info(f"   Calibration periods: {calib_analysis['calibration_periods_detected']:,} detected, {calib_analysis.get('total_records_marked_for_removal', 0):,} records removed")
+        if show_stats or preprocessor.print_statistics:
+            params = {
+                'expected_interval_minutes': preprocessor.expected_interval_minutes,
+                'small_gap_max_minutes': preprocessor.small_gap_max_minutes,
+                'remove_calibration': preprocessor.remove_calibration,
+                'min_sequence_len': preprocessor.min_sequence_len,
+                'calibration_period_minutes': preprocessor.calibration_period_minutes,
+                'remove_after_calibration_hours': preprocessor.remove_after_calibration_hours,
+                'create_fixed_frequency': preprocessor.create_fixed_frequency
+            }
+            stats_output = sm_print_statistics(statistics, params)
+            
+            # Save statistics to .txt file next to output file
+            try:
+                stats_file = final_output_file.with_suffix('.txt')
+                stats_file.write_text(stats_output, encoding='utf-8')
+                logger.info(f"Full statistics saved to: {stats_file}")
+            except Exception as e:
+                logger.warning(f"Could not save statistics to file: {e}")
         
     except Exception as e:
         logger.error(f"Error during processing: {e}")

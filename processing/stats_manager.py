@@ -369,79 +369,82 @@ class StatsManager:
         
         return aggregated
 
-def print_statistics(stats: Dict[str, Any], preprocessor_params: Optional[Dict[str, Any]] = None) -> None:
+def print_statistics(stats: Dict[str, Any], preprocessor_params: Optional[Dict[str, Any]] = None) -> str:
     """
-    Print formatted statistics.
+    Print formatted statistics and return as string.
     """
-    logger.info("\n" + "="*60)
-    logger.info("GLUCOSE DATA PREPROCESSING STATISTICS")
-    logger.info("="*60)
+    lines = []
+    lines.append("\n" + "="*60)
+    lines.append("GLUCOSE DATA PREPROCESSING STATISTICS")
+    lines.append("="*60)
     
-    if 'multi_database_info' in stats:
+    if 'multi_database_info' in stats and stats['multi_database_info'].get('total_databases', 0) > 1:
         multi_db_info = stats['multi_database_info']
-        logger.info(f"\nMULTI-DATABASE PROCESSING:")
-        logger.info(f"   Total Databases Combined: {multi_db_info['total_databases']}")
-        logger.info(f"   Database Paths:")
+        lines.append(f"\nMULTI-DATABASE PROCESSING:")
+        lines.append(f"   Total Databases Combined: {multi_db_info['total_databases']}")
+        lines.append(f"   Database Paths:")
         for i, path in enumerate(multi_db_info['database_paths'], 1):
-            logger.info(f"      {i}. {path}")
+            lines.append(f"      {i}. {path}")
         
-        logger.info(f"\n   Processed Databases Details:")
+        lines.append(f"\n   Processed Databases Details:")
         for db in multi_db_info['databases_processed']:
             db_idx = db.get('database_index', 'N/A')
             db_name = db.get('database_name', 'Unknown')
             seq_range = db.get('sequence_id_range', {})
-            logger.info(f"      Database {db_idx} ({db_name}):")
-            logger.info(f"         Sequence ID Range: {seq_range.get('min', 'N/A')} - {seq_range.get('max', 'N/A')}")
+            # Only show if there's actual sequence information or name is not just "Streaming Chunk"
+            if seq_range.get('min') is not None or db_name != "Streaming Chunk":
+                lines.append(f"      Database {db_idx} ({db_name}):")
+                lines.append(f"         Sequence ID Range: {seq_range.get('min', 'N/A')} - {seq_range.get('max', 'N/A')}")
     
     if preprocessor_params:
-        logger.info(f"\nPARAMETERS USED:")
+        lines.append(f"\nPARAMETERS USED:")
         for k, v in preprocessor_params.items():
-            logger.info(f"   {k.replace('_', ' ').title()}: {v}")
+            lines.append(f"   {k.replace('_', ' ').title()}: {v}")
     
     overview = stats.get('dataset_overview', {})
-    logger.info(f"\nDATASET OVERVIEW:")
-    logger.info(f"   Total Records: {overview.get('total_records', 0):,}")
-    logger.info(f"   Total Sequences: {overview.get('total_sequences', 0):,}")
+    lines.append(f"\nDATASET OVERVIEW:")
+    lines.append(f"   Total Records: {overview.get('total_records', 0):,}")
+    lines.append(f"   Total Sequences: {overview.get('total_sequences', 0):,}")
     
     date_range = overview.get('date_range', {})
-    logger.info(f"   Date Range: {date_range.get('start', 'N/A')} to {date_range.get('end', 'N/A')}")
+    lines.append(f"   Date Range: {date_range.get('start', 'N/A')} to {date_range.get('end', 'N/A')}")
     
     original_records = overview.get('original_records', overview.get('total_records', 0))
     final_records = overview.get('total_records', 0)
     preservation_percentage = (final_records / original_records * 100) if original_records > 0 else 100
-    logger.info(f"   Data Preservation: {preservation_percentage:.1f}% ({final_records:,}/{original_records:,} records)")
+    lines.append(f"   Data Preservation: {preservation_percentage:.1f}% ({final_records:,}/{original_records:,} records)")
     
     seq_analysis = stats['sequence_analysis']
-    logger.info(f"\nSEQUENCE ANALYSIS:")
-    logger.info(f"   Longest Sequence: {seq_analysis.get('longest_sequence', 0):,} records")
-    logger.info(f"   Shortest Sequence: {seq_analysis.get('shortest_sequence', 0):,} records")
+    lines.append(f"\nSEQUENCE ANALYSIS:")
+    lines.append(f"   Longest Sequence: {seq_analysis.get('longest_sequence', 0):,} records")
+    lines.append(f"   Shortest Sequence: {seq_analysis.get('shortest_sequence', 0):,} records")
     
     seq_lengths = seq_analysis.get('sequence_lengths', {})
-    logger.info(f"   Average Sequence Length: {seq_lengths.get('mean', 0):.1f} records")
-    logger.info(f"   Median Sequence Length: {seq_lengths.get('50%', 0):.1f} records")
+    lines.append(f"   Average Sequence Length: {seq_lengths.get('mean', 0):.1f} records")
+    lines.append(f"   Median Sequence Length: {seq_lengths.get('50%', 0):.1f} records")
     
     gap_analysis = stats.get('gap_analysis', {})
     if gap_analysis:
-        logger.info(f"\nGAP ANALYSIS:")
-        logger.info(f"   Total Gaps: {gap_analysis.get('total_gaps', 0):,}")
-        logger.info(f"   Sequences Created: {gap_analysis.get('total_sequences', 0):,}")
+        lines.append(f"\nGAP ANALYSIS:")
+        lines.append(f"   Total Gaps: {gap_analysis.get('total_gaps', 0):,}")
+        lines.append(f"   Sequences Created: {gap_analysis.get('total_sequences', 0):,}")
     
     if 'calibration_period_analysis' in gap_analysis and gap_analysis['calibration_period_analysis']:
         calib_analysis = gap_analysis['calibration_period_analysis']
-        logger.info(f"\nCALIBRATION PERIOD ANALYSIS:")
-        logger.info(f"   Calibration Periods Detected: {calib_analysis.get('calibration_periods_detected', 0):,}")
-        logger.info(f"   Records Removed After Calibration: {calib_analysis.get('total_records_marked_for_removal', 0):,}")
+        lines.append(f"\nCALIBRATION PERIOD ANALYSIS:")
+        lines.append(f"   Calibration Periods Detected: {calib_analysis.get('calibration_periods_detected', 0):,}")
+        lines.append(f"   Records Removed After Calibration: {calib_analysis.get('total_records_marked_for_removal', 0):,}")
     
     cleaning_analysis = stats.get('cleaning_analysis', {})
     if cleaning_analysis:
-        logger.info(f"\nDATA CLEANING ANALYSIS:")
-        logger.info(f"   Records Removed In Large Gaps: {cleaning_analysis.get('removed_records', 0):,}")
+        lines.append(f"\nDATA CLEANING ANALYSIS:")
+        lines.append(f"   Records Removed In Large Gaps: {cleaning_analysis.get('removed_records', 0):,}")
     
     interp_analysis = stats.get('interpolation_analysis', {})
     if interp_analysis:
-        logger.info(f"\nINTERPOLATION ANALYSIS:")
-        logger.info(f"   Small Gaps Identified and Processed: {interp_analysis.get('small_gaps_filled', 0):,}")
-        logger.info(f"   Inserted Data Points Created: {interp_analysis.get('total_interpolated_data_points', 0):,}")
+        lines.append(f"\nINTERPOLATION ANALYSIS:")
+        lines.append(f"   Small Gaps Identified and Processed: {interp_analysis.get('small_gaps_filled', 0):,}")
+        lines.append(f"   Inserted Data Points Created: {interp_analysis.get('total_interpolated_data_points', 0):,}")
         
         # Print field-specific interpolations
         for key, val in interp_analysis.items():
@@ -449,35 +452,39 @@ def print_statistics(stats: Dict[str, Any], preprocessor_params: Optional[Dict[s
                 field_name = key.replace('_interpolations', '').replace('_', ' ').title()
                 pct_key = f"{key}_pct"
                 pct = interp_analysis.get(pct_key, 0.0)
-                logger.info(f"   {field_name} Interpolations: {val:,} ({pct}%)")
+                lines.append(f"   {field_name} Interpolations: {val:,} ({pct}%)")
         
-        logger.info(f"   Total Field Interpolations: {interp_analysis.get('total_interpolations', 0):,}")
+        lines.append(f"   Total Field Interpolations: {interp_analysis.get('total_interpolations', 0):,}")
     
     filter_analysis = stats.get('filtering_analysis', {})
     if filter_analysis:
-        logger.info(f"\nSEQUENCE FILTERING ANALYSIS:")
-        logger.info(f"   Original Sequences: {filter_analysis.get('original_sequences', 0):,}")
-        logger.info(f"   Sequences After Filtering: {filter_analysis.get('filtered_sequences', 0):,}")
-        logger.info(f"   Records After Filtering: {filter_analysis.get('filtered_records', 0):,}")
+        lines.append(f"\nSEQUENCE FILTERING ANALYSIS:")
+        lines.append(f"   Original Sequences: {filter_analysis.get('original_sequences', 0):,}")
+        lines.append(f"   Sequences After Filtering: {filter_analysis.get('filtered_sequences', 0):,}")
+        lines.append(f"   Records After Filtering: {filter_analysis.get('filtered_records', 0):,}")
     
     fixed_freq_analysis = stats.get('fixed_frequency_analysis', {})
     if fixed_freq_analysis:
-        logger.info(f"\nFIXED-FREQUENCY ANALYSIS:")
-        logger.info(f"   Sequences Processed: {fixed_freq_analysis.get('sequences_processed', 0):,}")
-        logger.info(f"   Records After: {fixed_freq_analysis.get('total_records_after', 0):,}")
+        lines.append(f"\nFIXED-FREQUENCY ANALYSIS:")
+        lines.append(f"   Sequences Processed: {fixed_freq_analysis.get('sequences_processed', 0):,}")
+        lines.append(f"   Records After: {fixed_freq_analysis.get('total_records_after', 0):,}")
         
         if 'data_density_before' in fixed_freq_analysis and 'data_density_after' in fixed_freq_analysis:
             before_density = fixed_freq_analysis['data_density_before']
             after_density = fixed_freq_analysis['data_density_after']
-            logger.info(f"\n   DATA DENSITY:")
-            logger.info(f"      Before: {before_density.get('avg_points_per_interval', 0.0):.2f} points/interval")
-            logger.info(f"      After: {after_density.get('avg_points_per_interval', 0.0):.2f} points/interval")
+            lines.append(f"\n   DATA DENSITY:")
+            lines.append(f"      Before: {before_density.get('avg_points_per_interval', 0.0):.2f} points/interval")
+            lines.append(f"      After: {after_density.get('avg_points_per_interval', 0.0):.2f} points/interval")
     
     quality = stats.get('data_quality', {})
-    logger.info(f"\nDATA QUALITY:")
-    logger.info(f"   Glucose Data Completeness: {quality.get('glucose_data_completeness', 0):.1f}%")
-    logger.info(f"   Interpolated Records (Existing rows): {quality.get('interpolated_records', 0):,}")
-    logger.info(f"   Inserted Records (New rows): {quality.get('inserted_records', 0):,}")
+    lines.append(f"\nDATA QUALITY:")
+    lines.append(f"   Glucose Data Completeness: {quality.get('glucose_data_completeness', 0):.1f}%")
+    lines.append(f"   Interpolated Records (Existing rows): {quality.get('interpolated_records', 0):,}")
+    lines.append(f"   Inserted Records (New rows): {quality.get('inserted_records', 0):,}")
     
-    logger.info("\n" + "="*60)
+    lines.append("\n" + "="*60)
+    
+    output = "\n".join(lines)
+    logger.info(output)
+    return output
 
