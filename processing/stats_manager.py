@@ -44,11 +44,13 @@ class StatsManager:
         ts_col = get_col(StandardFieldNames.TIMESTAMP)
         seq_id_col = get_col(StandardFieldNames.SEQUENCE_ID)
         event_type_col = get_col(StandardFieldNames.EVENT_TYPE)
-        glucose_col = get_col(StandardFieldNames.GLUCOSE_VALUE)
-        fast_insulin_col = get_col(StandardFieldNames.FAST_ACTING_INSULIN)
-        long_insulin_col = get_col(StandardFieldNames.LONG_ACTING_INSULIN)
-        carb_col = get_col(StandardFieldNames.CARB_VALUE)
         
+        # Service fields that we don't calculate completeness for (except glucose)
+        service_fields = {
+            ts_col, seq_id_col, event_type_col,
+            get_col(StandardFieldNames.USER_ID),
+            get_col(StandardFieldNames.DATASET_NAME)
+        }
 
         date_range = {'start': 'N/A', 'end': 'N/A'}
         if ts_col in df.columns:
@@ -117,16 +119,26 @@ class StatsManager:
             'data_quality': {}
         }
         
-        stats['data_quality'] = {
-            'glucose_data_completeness': (1 - df[glucose_col].null_count() / len(df)) * 100 if glucose_col in df.columns and len(df) > 0 else 0,
-            'fast_acting_insulin_data_completeness': (1 - df[fast_insulin_col].null_count() / len(df)) * 100 if fast_insulin_col in df.columns and len(df) > 0 else 0,
-            'long_acting_insulin_data_completeness': (1 - df[long_insulin_col].null_count() / len(df)) * 100 if long_insulin_col in df.columns and len(df) > 0 else 0,
-            'carb_data_completeness': (1 - df[carb_col].null_count() / len(df)) * 100 if carb_col in df.columns and len(df) > 0 else 0,
-            'interpolated_records': df.filter(pl.col(event_type_col) == INTERPOLATED_EVENT_TYPE).height if event_type_col in df.columns else 0,
-            'inserted_records': df.filter(pl.col(event_type_col) == INSERTED_EVENT_TYPE).height if event_type_col in df.columns else 0
-        }
+        # Calculate completeness for all non-service fields
+        quality = {}
+        if len(df) > 0:
+            for col in df.columns:
+                if col not in service_fields:
+                    completeness = (1 - df[col].null_count() / len(df)) * 100
+                    quality[f"{col}_data_completeness"] = completeness
+        
+        # Add special records counts if columns exist
+        if event_type_col in df.columns:
+            quality['interpolated_records'] = df.filter(pl.col(event_type_col) == INTERPOLATED_EVENT_TYPE).height
+            quality['inserted_records'] = df.filter(pl.col(event_type_col) == INSERTED_EVENT_TYPE).height
+        else:
+            quality['interpolated_records'] = 0
+            quality['inserted_records'] = 0
+
+        stats['data_quality'] = quality
         
         return stats
+
 
     def aggregate_statistics(self, all_statistics: List[Dict[str, Any]], csv_folders: Sequence[Union[str, Path]]) -> Dict[str, Any]:
         """
@@ -176,9 +188,6 @@ class StatsManager:
             'interpolation_analysis': {
                 'total_interpolations': 0,
                 'total_interpolated_data_points': 0,
-                'glucose_value_mgdl_interpolations': 0,
-                'insulin_value_u_interpolations': 0,
-                'carb_value_grams_interpolations': 0,
                 'sequences_processed': 0,
                 'small_gaps_filled': 0,
                 'large_gaps_skipped': 0
@@ -197,19 +206,10 @@ class StatsManager:
                 'sequences_processed': 0,
                 'total_records_before': 0,
                 'total_records_after': 0,
-                'glucose_interpolations': 0,
-                'carb_shifted_records': 0,
-                'insulin_shifted_records': 0,
                 'time_adjustments': 0
             },
             'glucose_filtering_analysis': {},
-            'data_quality': {
-                'glucose_data_completeness': 0,
-                'insulin_data_completeness': 0,
-                'carb_data_completeness': 0,
-                'interpolated_records': 0,
-                'inserted_records': 0
-            }
+            'data_quality': {}
         }
         
         all_sequence_lengths = []
@@ -297,13 +297,12 @@ class StatsManager:
             
             fixed_freq_analysis = stats.get('fixed_frequency_analysis', {})
             if fixed_freq_analysis:
-                aggregated['fixed_frequency_analysis']['sequences_processed'] += fixed_freq_analysis.get('sequences_processed', 0)
-                aggregated['fixed_frequency_analysis']['total_records_before'] += fixed_freq_analysis.get('total_records_before', 0)
-                aggregated['fixed_frequency_analysis']['total_records_after'] += fixed_freq_analysis.get('total_records_after', 0)
-                aggregated['fixed_frequency_analysis']['glucose_interpolations'] += fixed_freq_analysis.get('glucose_interpolations', 0)
-                aggregated['fixed_frequency_analysis']['carb_shifted_records'] += fixed_freq_analysis.get('carb_shifted_records', 0)
-                aggregated['fixed_frequency_analysis']['insulin_shifted_records'] += fixed_freq_analysis.get('insulin_shifted_records', 0)
-                aggregated['fixed_frequency_analysis']['time_adjustments'] += fixed_freq_analysis.get('time_adjustments', 0)
+                # Aggregate all numeric values in fixed_frequency_analysis
+                for key, val in fixed_freq_analysis.items():
+                    if isinstance(val, (int, float)) and key not in ['data_density_before', 'data_density_after']:
+                        if key not in aggregated['fixed_frequency_analysis']:
+                            aggregated['fixed_frequency_analysis'][key] = 0
+                        aggregated['fixed_frequency_analysis'][key] += val
                 
                 if 'data_density_before' in fixed_freq_analysis and 'data_density_after' in fixed_freq_analysis:
                     before_density = fixed_freq_analysis['data_density_before']
@@ -326,18 +325,22 @@ class StatsManager:
             quality = stats.get('data_quality', {})
             if quality:
                 recs = overview.get('total_records', 0)
-                aggregated['data_quality']['glucose_data_completeness'] += quality.get('glucose_data_completeness', 0) * recs
-                aggregated['data_quality']['insulin_data_completeness'] += quality.get('insulin_data_completeness', 0) * recs
-                aggregated['data_quality']['carb_data_completeness'] += quality.get('carb_data_completeness', 0) * recs
-                aggregated['data_quality']['interpolated_records'] += quality.get('interpolated_records', 0)
-                aggregated['data_quality']['inserted_records'] += quality.get('inserted_records', 0)
+                for key, val in quality.items():
+                    if key.endswith('_data_completeness'):
+                        if key not in aggregated['data_quality']:
+                            aggregated['data_quality'][key] = 0
+                        aggregated['data_quality'][key] += val * recs
+                    elif key in ['interpolated_records', 'inserted_records']:
+                        if key not in aggregated['data_quality']:
+                            aggregated['data_quality'][key] = 0
+                        aggregated['data_quality'][key] += val
         
         # Calculate final averages for completeness
         total_agg_recs = aggregated['dataset_overview']['total_records']
         if total_agg_recs > 0:
-            aggregated['data_quality']['glucose_data_completeness'] /= total_agg_recs
-            aggregated['data_quality']['insulin_data_completeness'] /= total_agg_recs
-            aggregated['data_quality']['carb_data_completeness'] /= total_agg_recs
+            for key in list(aggregated['data_quality'].keys()):
+                if key.endswith('_data_completeness'):
+                    aggregated['data_quality'][key] /= total_agg_recs
             
             # Recalculate interpolation percentages for aggregated stats
             interp_agg = aggregated['interpolation_analysis']
@@ -469,6 +472,16 @@ def print_statistics(stats: Dict[str, Any], preprocessor_params: Optional[Dict[s
         lines.append(f"   Sequences Processed: {fixed_freq_analysis.get('sequences_processed', 0):,}")
         lines.append(f"   Records After: {fixed_freq_analysis.get('total_records_after', 0):,}")
         
+        # Print other fixed-frequency metrics
+        skip_keys = {
+            'sequences_processed', 'total_records_after', 'total_records_before',
+            'data_density_before', 'data_density_after', 'density_change_explanation'
+        }
+        for key, val in fixed_freq_analysis.items():
+            if key not in skip_keys and isinstance(val, (int, float)):
+                name = key.replace('_', ' ').title()
+                lines.append(f"   {name}: {val:,}")
+        
         if 'data_density_before' in fixed_freq_analysis and 'data_density_after' in fixed_freq_analysis:
             before_density = fixed_freq_analysis['data_density_before']
             after_density = fixed_freq_analysis['data_density_after']
@@ -478,9 +491,18 @@ def print_statistics(stats: Dict[str, Any], preprocessor_params: Optional[Dict[s
     
     quality = stats.get('data_quality', {})
     lines.append(f"\nDATA QUALITY:")
-    lines.append(f"   Glucose Data Completeness: {quality.get('glucose_data_completeness', 0):.1f}%")
-    lines.append(f"   Interpolated Records (Existing rows): {quality.get('interpolated_records', 0):,}")
-    lines.append(f"   Inserted Records (New rows): {quality.get('inserted_records', 0):,}")
+    
+    # Print all data completeness stats
+    for key, val in quality.items():
+        if key.endswith('_data_completeness'):
+            field_name = key.replace('_data_completeness', '').replace('_', ' ').title()
+            lines.append(f"   {field_name} Data Completeness: {val:.1f}%")
+            
+    # Print special record counts
+    if 'interpolated_records' in quality:
+        lines.append(f"   Interpolated Records (Existing rows): {quality['interpolated_records']:,}")
+    if 'inserted_records' in quality:
+        lines.append(f"   Inserted Records (New rows): {quality['inserted_records']:,}")
     
     lines.append("\n" + "="*60)
     
