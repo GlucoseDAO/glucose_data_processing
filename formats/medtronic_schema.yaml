@@ -9,11 +9,11 @@ field_categories:
   timestamp: service
   event_type: service
   glucose_value_mgdl: continuous
-  fast_acting_insulin_u: occasional
-  long_acting_insulin_u: occasional
-  carb_grams: occasional
+  fast_acting_insulin_u: occasional_sum
+  long_acting_insulin_u: occasional_sum
+  carb_grams: occasional_sum
   basal_rate: continuous
-  sensor_calibration_bg: occasional
+  sensor_calibration_bg: occasional_avg
 converters:
   guardian:
     timestamp_field: timestamp_combined

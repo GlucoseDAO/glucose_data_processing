@@ -1,6 +1,6 @@
 database: uc_ht
 timestamp_formats:
-- "%Y-%m-%d %H:%M:%S"
+  - "%Y-%m-%d %H:%M:%S"
 timestamp_output_format: "%Y-%m-%dT%H:%M:%S"
 remove_after_calibration: false
 field_categories:
@@ -9,9 +9,9 @@ field_categories:
   glucose_value_mgdl: continuous
   heart_rate: continuous
   step_count: continuous
-  carb_grams: occasional
+  carb_grams: occasional_sum
   long_acting_insulin_u: continuous
-  fast_acting_insulin_u: occasional
+  fast_acting_insulin_u: occasional_sum
   igar_g_min: continuous
 converters:
   glucose:

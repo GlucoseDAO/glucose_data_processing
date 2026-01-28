@@ -37,7 +37,12 @@ class TestFixedFrequencyLogic:
         
         df_fixed, _ = preprocessor.fixed_freq_generator.create_fixed_frequency_data(
             df,
-            {"continuous": ["glucose_value_mgdl"], "occasional": ["fast_acting_insulin_u"], "service": ["event_type"]},
+            {
+                "continuous": ["glucose_value_mgdl"],
+                "occasional": ["fast_acting_insulin_u"],
+                "occasional_sum": ["fast_acting_insulin_u"],
+                "service": ["event_type"]
+            },
         )
         
         # Check 10:00
@@ -69,7 +74,12 @@ class TestFixedFrequencyLogic:
         
         df_fixed, _ = preprocessor.fixed_freq_generator.create_fixed_frequency_data(
             df,
-            {"continuous": ["glucose_value_mgdl"], "occasional": ["fast_acting_insulin_u"], "service": ["event_type"]},
+            {
+                "continuous": ["glucose_value_mgdl"],
+                "occasional": ["fast_acting_insulin_u"],
+                "occasional_sum": ["fast_acting_insulin_u"],
+                "service": ["event_type"]
+            },
         )
         
         # Get insulin values
@@ -100,7 +110,12 @@ class TestFixedFrequencyLogic:
         
         df_fixed, _ = preprocessor.fixed_freq_generator.create_fixed_frequency_data(
             df,
-            {"continuous": ["glucose_value_mgdl"], "occasional": ["fast_acting_insulin_u"], "service": ["event_type"]},
+            {
+                "continuous": ["glucose_value_mgdl"],
+                "occasional": ["fast_acting_insulin_u"],
+                "occasional_sum": ["fast_acting_insulin_u"],
+                "service": ["event_type"]
+            },
         )
         
         row_00 = df_fixed.filter(pl.col("timestamp") == datetime(2023, 1, 1, 10, 0, 0))
@@ -131,7 +146,12 @@ class TestFixedFrequencyLogic:
         
         df_fixed, _ = preprocessor.fixed_freq_generator.create_fixed_frequency_data(
             df,
-            {"continuous": ["glucose_value_mgdl"], "occasional": ["carb_grams", "fast_acting_insulin_u"], "service": ["event_type"]},
+            {
+                "continuous": ["glucose_value_mgdl"],
+                "occasional": ["carb_grams", "fast_acting_insulin_u"],
+                "occasional_sum": ["carb_grams", "fast_acting_insulin_u"],
+                "service": ["event_type"]
+            },
         )
         
         row_00 = df_fixed.filter(pl.col("timestamp") == datetime(2023, 1, 1, 10, 0, 0))

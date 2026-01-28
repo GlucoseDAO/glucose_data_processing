@@ -73,6 +73,7 @@ def test_multiple_continuous_fields_same_points():
     field_categories = {
         'continuous': ['glucose_value_mgdl', 'continuous_field_1', 'continuous_field_2'],
         'occasional': ['occasional_field'],
+        'occasional_sum': ['occasional_field'],
         'service': ['service_field', 'event_type']
     }
     
@@ -141,6 +142,7 @@ def test_continuous_field_with_fewer_points():
     field_categories = {
         'continuous': ['glucose_value_mgdl', 'continuous_field_1'],
         'occasional': ['occasional_field'],
+        'occasional_sum': ['occasional_field'],
         'service': ['event_type']
     }
     
@@ -207,6 +209,7 @@ def test_no_continuous_fields_except_glucose():
     field_categories = {
         'continuous': [],
         'occasional': ['occasional_field'],
+        'occasional_sum': ['occasional_field'],
         'service': ['event_type']
     }
     
@@ -657,6 +660,8 @@ def test_extract_field_categories():
     
     assert 'continuous' in categories
     assert 'occasional' in categories
+    assert 'occasional_avg' in categories
+    assert 'occasional_sum' in categories
     assert 'service' in categories
     
     # Glucose should be in continuous

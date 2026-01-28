@@ -1,16 +1,16 @@
 database: freestyle_libre3
 timestamp_formats:
-- "%d-%m-%Y %H:%M"
-- "%d-%m-%Y %H:%M:%S"
+  - "%d-%m-%Y %H:%M"
+  - "%d-%m-%Y %H:%M:%S"
 timestamp_output_format: "%Y-%m-%dT%H:%M:%S"
 remove_after_calibration: true
 field_categories:
   timestamp: service
   event_type: service
   glucose_value_mgdl: continuous
-  fast_acting_insulin_u: occasional
-  long_acting_insulin_u: occasional
-  carb_grams: occasional
+  fast_acting_insulin_u: occasional_sum
+  long_acting_insulin_u: occasional_sum
+  carb_grams: occasional_sum
 converters:
   libre3:
     timestamp_field: Device Timestamp
@@ -24,4 +24,3 @@ converters:
       Correction Insulin (units): correction_insulin_u
       Long-Acting Insulin (units): long_acting_insulin_u
       Carbohydrates (grams): carb_grams
-

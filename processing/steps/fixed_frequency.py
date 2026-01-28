@@ -210,23 +210,27 @@ class FixedFreqGenerator:
         glucose_col = StandardFieldNames.GLUCOSE_VALUE
         event_type_col = StandardFieldNames.EVENT_TYPE
         user_id_col = StandardFieldNames.USER_ID
-        first_timestamp = seq_data[ts_col].min()
-        last_timestamp = seq_data[ts_col].max()
-        if first_timestamp is None or last_timestamp is None:
-            return seq_data
+        
+        # This pipeline is for glucose prediction. Covariates outside glucose range have no meaning.
+        # We bound the sequence by the first and last available glucose readings.
+        glucose_data = seq_data.filter(pl.col(glucose_col).is_not_null())
+        if len(glucose_data) < 2:
+            # Not enough glucose data to form a sequence for ML
+            return seq_data.clear()
 
-        # Align the fixed-frequency grid to the dominant CGM seconds offset (important for Medtronic).
-        #
-        # Many datasets have glucose timestamps with a stable seconds offset (e.g. :16) while
-        # event rows (insulin/carb) can be logged at different seconds (e.g. :18).
-        # If we anchor the grid to the first row in the sequence, we can get a constant phase shift
-        # and the resampled/interpolated glucose values will look mismatched vs raw CGM.
-        #
-        # Strategy:
-        # - Prefer anchoring to timestamps where we have CGM glucose values (event_type == "CGM")
-        # - Fall back to any glucose values
-        # - Fall back to the sequence start
-        anchor_timestamp = first_timestamp
+        first_glucose_ts = glucose_data[ts_col].min()
+        last_glucose_ts = glucose_data[ts_col].max()
+        
+        if first_glucose_ts is None or last_glucose_ts is None:
+            return seq_data.clear()
+
+        # Discard data outside glucose range (with a half-interval margin for covariates)
+        # This allows events close to the start/end to be shifted onto the first/last grid points.
+        margin = timedelta(seconds=(self.expected_interval_minutes * 60) / 2.0)
+        seq_data = seq_data.filter((pl.col(ts_col) >= first_glucose_ts - margin) & (pl.col(ts_col) <= last_glucose_ts + margin))
+
+        # Align the fixed-frequency grid to the dominant CGM seconds offset
+        anchor_timestamp = first_glucose_ts
         anchor_seconds = 0
         try:
             if glucose_col in seq_data.columns:
@@ -276,7 +280,9 @@ class FixedFreqGenerator:
         # If we detected a stable CGM seconds offset, we round relative to that offset so the grid
         # lands on real CGM timestamps (e.g. hh:mm:53).
         target_second = anchor_seconds
-        normalized = anchor_timestamp.replace(microsecond=0) - timedelta(seconds=target_second)
+        
+        # Grid covers the glucose-bounded range
+        normalized = first_glucose_ts.replace(microsecond=0) - timedelta(seconds=target_second)
         if normalized.second >= 30:
             normalized = normalized + timedelta(seconds=(60 - normalized.second))
         else:
@@ -284,13 +290,13 @@ class FixedFreqGenerator:
         normalized = normalized.replace(microsecond=0)
         aligned_start = (normalized + timedelta(seconds=target_second)).replace(second=target_second, microsecond=0)
         
-        total_duration = (last_timestamp - aligned_start).total_seconds()
+        total_duration = (last_glucose_ts - aligned_start).total_seconds()
         num_intervals = int(total_duration / (self.expected_interval_minutes * 60)) + 1
         
         fixed_timestamps_list = [
             aligned_start + timedelta(minutes=i * self.expected_interval_minutes)
             for i in range(num_intervals)
-            if aligned_start + timedelta(minutes=i * self.expected_interval_minutes) <= last_timestamp
+            if aligned_start + timedelta(minutes=i * self.expected_interval_minutes) <= last_glucose_ts
         ]
         
         fixed_timestamps = pl.DataFrame({
@@ -315,21 +321,25 @@ class FixedFreqGenerator:
         event_cols: List[str] = []
         seen_cols = set()
         result_existing = set(result_df.columns)
-        for col in occasional_fields + service_fields + [event_type_col, user_id_col]:
+        
+        # We treat everything that is not a continuous field as an event field
+        # This is more robust than relying on the occasional_fields list being perfect
+        all_potential_event_cols = [c for c in seq_data.columns if c not in continuous_fields and c not in [ts_col, seq_id_col]]
+        
+        for col in all_potential_event_cols:
             if col in result_existing:
                 continue
-            if col in seq_data.columns and col not in continuous_fields and col not in seen_cols:
+            if col not in seen_cols:
                 event_cols.append(col)
                 seen_cols.add(col)
         
         if event_cols:
-            numeric_hint: Optional[set[str]] = set(occasional_fields) if occasional_fields else None
             events_df = self._shift_events_rounding(
                 seq_data,
                 event_cols,
                 stats,
                 fixed_timestamps_list,
-                numeric_cols_hint=numeric_hint,
+                field_categories_dict=field_categories_dict,
             )
             result_df = result_df.join(events_df, on=ts_col, how='left')
         
@@ -401,6 +411,7 @@ class FixedFreqGenerator:
                 .when(pl.col(f'ts_{safe_name}_next').is_null()) # No next
                 .then(pl.col(f'{safe_name}_prev'))
                 .otherwise(
+                    # Linear interpolation for alignment to grid
                     pl.col(f'{safe_name}_prev') + (
                         (pl.col(f'{safe_name}_next') - pl.col(f'{safe_name}_prev')) * 
                         (pl.col(ts_col) - pl.col(f'ts_{safe_name}_prev')).dt.total_seconds() / 
@@ -431,7 +442,7 @@ class FixedFreqGenerator:
         cols: List[str],
         stats: Dict[str, Any],
         fixed_timestamps_list: List[datetime],
-        numeric_cols_hint: Optional[set[str]] = None,
+        field_categories_dict: Optional[Dict[str, Any]] = None,
     ) -> pl.DataFrame:
         ts_col = StandardFieldNames.TIMESTAMP
         user_id_col = StandardFieldNames.USER_ID
@@ -459,13 +470,21 @@ class FixedFreqGenerator:
             pl.col('fixed_timestamp').alias(ts_col)
         ]).drop('fixed_timestamp')
         
+        # Identify numeric columns and their aggregation types
+        sum_cols: set[str] = set()
+        avg_cols: set[str] = set()
         numeric_cols: List[str] = []
-        if numeric_cols_hint is not None:
-            numeric_cols = [
-                c for c in cols
-                if c in numeric_cols_hint and c not in {event_type_col, user_id_col} and not c.endswith('_id')
-            ]
+        
+        if field_categories_dict is not None:
+            sum_cols = set(field_categories_dict.get('occasional_sum', []))
+            avg_cols = set(field_categories_dict.get('occasional_avg', []))
+            occasional_all = set(field_categories_dict.get('occasional', []))
+            
+            for c in cols:
+                if c in occasional_all and c not in {event_type_col, user_id_col} and not c.endswith('_id'):
+                    numeric_cols.append(c)
         else:
+            # Fallback to previous logic if no field categories provided
             for c in cols:
                 if c in {event_type_col, user_id_col} or c.endswith('_id'):
                     continue
@@ -477,6 +496,7 @@ class FixedFreqGenerator:
                     any_numeric = False
                 if any_numeric:
                     numeric_cols.append(c)
+                    sum_cols.add(c) # Default to sum
         
         cast_exprs = []
         for col in cols:
@@ -488,18 +508,31 @@ class FixedFreqGenerator:
         if cast_exprs:
             events_shifted = events_shifted.with_columns(cast_exprs)
         
-        if 'carb_shifted_records' not in stats:
-            stats['carb_shifted_records'] = 0
-        if 'insulin_shifted_records' not in stats:
-            stats['insulin_shifted_records'] = 0
-            
         for col in cols:
             if col in numeric_cols:
-                stats['insulin_shifted_records'] += events_shifted.filter(pl.col(col).is_not_null()).height
+                stat_key = f'{col}_shifted_records'
+                if stat_key not in stats:
+                    stats[stat_key] = 0
+                stats[stat_key] += events_shifted.filter(pl.col(col).is_not_null()).height
         
         agg_exprs = []
         for col in cols:
-            if col in numeric_cols:
+            if col in sum_cols:
+                agg_exprs.append(
+                    pl.when(pl.col(col).is_not_null().any())
+                    .then(pl.col(col).sum())
+                    .otherwise(None)
+                    .alias(col)
+                )
+            elif col in avg_cols:
+                agg_exprs.append(
+                    pl.when(pl.col(col).is_not_null().any())
+                    .then(pl.col(col).mean())
+                    .otherwise(None)
+                    .alias(col)
+                )
+            elif col in numeric_cols:
+                # Fallback for numeric columns not explicitly in sum or avg lists
                 agg_exprs.append(
                     pl.when(pl.col(col).is_not_null().any())
                     .then(pl.col(col).sum())

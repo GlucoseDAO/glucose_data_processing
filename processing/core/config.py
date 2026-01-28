@@ -89,6 +89,8 @@ def extract_field_categories(database_type: str) -> Dict[str, Any]:
     result = {
         'continuous': [],
         'occasional': [],
+        'occasional_avg': [],
+        'occasional_sum': [],
         'service': [],
         'remove_after_calibration': schema.get('remove_after_calibration', True),
         'fill_during_interpolation': schema.get('fill_during_interpolation', [])
@@ -97,6 +99,12 @@ def extract_field_categories(database_type: str) -> Dict[str, Any]:
     for standard_name, category in field_categories.items():
         if category in result:
             result[category].append(standard_name)
+            if category in ['occasional_avg', 'occasional_sum']:
+                result['occasional'].append(standard_name)
+        elif category == 'occasional':
+            # Backward compatibility: treat 'occasional' as 'occasional_sum'
+            result['occasional'].append(standard_name)
+            result['occasional_sum'].append(standard_name)
     
     # Always ensure glucose is in continuous (if it exists)
     glucose_col = StandardFieldNames.GLUCOSE_VALUE

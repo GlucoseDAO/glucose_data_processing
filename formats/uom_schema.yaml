@@ -1,53 +1,53 @@
 database: uom
 timestamp_formats:
-- "%d/%m/%Y %H:%M:%S"
-- "%d/%m/%Y %H:%M"
+  - "%d/%m/%Y %H:%M:%S"
+  - "%d/%m/%Y %H:%M"
 timestamp_output_format: "%Y-%m-%dT%H:%M:%S"
 remove_after_calibration: false
 field_categories:
   timestamp: service
   event_type: service
   glucose_value_mgdl: continuous
-  long_acting_insulin_u: occasional
-  fast_acting_insulin_u: occasional
-  carb_grams: occasional
-  protein_grams: occasional
-  fat_grams: occasional
-  fiber_grams: occasional
+  long_acting_insulin_u: occasional_sum
+  fast_acting_insulin_u: occasional_sum
+  carb_grams: occasional_sum
+  protein_grams: occasional_sum
+  fat_grams: occasional_sum
+  fiber_grams: occasional_sum
   heart_rate: continuous
-  resting_heart_rate: occasional
-  step_count: occasional
-  distance_m: occasional
-  motion_intensity_mean: occasional
+  resting_heart_rate: occasional_avg
+  step_count: occasional_sum
+  distance_m: occasional_sum
+  motion_intensity_mean: occasional_avg
   motion_intensity_max: continuous
-  active_kcal: occasional
+  active_kcal: occasional_sum
   duration_s: service
   active_time_s: continuous
   stress_level: continuous
-  sleep_duration_seconds: occasional
-  deep_sleep_seconds: occasional
-  light_sleep_seconds: occasional
-  rem_sleep_seconds: occasional
-  awake_seconds: occasional
-  unmeasurable_sleep_seconds: occasional
-  activity_type: occasional
-  insulin_kind: occasional
-  meal_type: occasional
-  meal_tag: occasional
-  start_time_s: occasional
-  start_time_offset_s: occasional
-  start_time_offset_seconds: occasional
-  met: occasional
-  intensity: occasional
-  activity_intensity: occasional
-  sleep_level: occasional
+  sleep_duration_seconds: occasional_sum
+  deep_sleep_seconds: occasional_sum
+  light_sleep_seconds: occasional_sum
+  rem_sleep_seconds: occasional_sum
+  awake_seconds: occasional_sum
+  unmeasurable_sleep_seconds: occasional_sum
+  activity_type: occasional_sum
+  insulin_kind: occasional_sum
+  meal_type: occasional_sum
+  meal_tag: occasional_sum
+  start_time_s: occasional_sum
+  start_time_offset_s: occasional_sum
+  start_time_offset_seconds: occasional_sum
+  met: occasional_avg
+  intensity: occasional_avg
+  activity_intensity: occasional_avg
+  sleep_level: occasional_avg
   calendar_date: service
-  sleep_levels_map_deep: occasional
-  sleep_levels_map_light: occasional
-  sleep_levels_map_awake: occasional
-  sleep_levels_map_rem: occasional
-  sleep_levels_map_unmeasurable: occasional
-  validation: occasional
+  sleep_levels_map_deep: occasional_sum
+  sleep_levels_map_light: occasional_sum
+  sleep_levels_map_awake: occasional_sum
+  sleep_levels_map_rem: occasional_sum
+  sleep_levels_map_unmeasurable: occasional_sum
+  validation: occasional_sum
 converters:
   activity:
     timestamp_field: activity_ts
@@ -126,4 +126,3 @@ converters:
       sleep_levels_map_rem: sleep_levels_map_rem
       sleep_levels_map_unmeasurable: sleep_levels_map_unmeasurable
       validation: validation
-

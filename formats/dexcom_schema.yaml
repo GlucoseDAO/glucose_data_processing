@@ -1,16 +1,16 @@
 database: dexcom
 timestamp_formats:
-- "%Y-%m-%dT%H:%M:%S"
-- "%Y-%m-%d %H:%M:%S"
+  - "%Y-%m-%dT%H:%M:%S"
+  - "%Y-%m-%d %H:%M:%S"
 timestamp_output_format: "%Y-%m-%dT%H:%M:%S"
 remove_after_calibration: true
 field_categories:
   timestamp: service
   event_type: service
   glucose_value_mgdl: continuous
-  fast_acting_insulin_u: occasional
-  long_acting_insulin_u: occasional
-  carb_grams: occasional
+  fast_acting_insulin_u: occasional_sum
+  long_acting_insulin_u: occasional_sum
+  carb_grams: occasional_sum
 converters:
   g6:
     timestamp_field: Timestamp (YYYY-MM-DDThh:mm:ss)
@@ -21,4 +21,3 @@ converters:
       Insulin Value (u): insulin_u
       Event Subtype: event_subtype
       Carb Value (grams): carb_grams
-

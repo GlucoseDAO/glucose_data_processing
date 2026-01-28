@@ -459,6 +459,7 @@ def test_occasional_fields_shifted_with_multiple_continuous_fields():
     
     field_categories = {
         'continuous': ['glucose_value_mgdl', 'heart_rate'],
+        'occasional_sum': ['Fast-Acting Insulin Value (u)', 'Carb Value (grams)'],
         'occasional': ['Fast-Acting Insulin Value (u)', 'Carb Value (grams)'],
         'service': ['Event Type']
     }
@@ -555,7 +556,7 @@ def test_occasional_fields_collision_with_multiple_continuous_fields():
     
     field_categories = {
         'continuous': ['glucose_value_mgdl', 'heart_rate'],
-        'occasional': ['Fast-Acting Insulin Value (u)', 'Carb Value (grams)'],
+        'occasional_sum': ['Fast-Acting Insulin Value (u)', 'Carb Value (grams)'],
         'service': ['Event Type']
     }
     
@@ -650,7 +651,7 @@ def test_mixed_continuous_and_occasional_fields_out_of_sync():
     
     field_categories = {
         'continuous': ['glucose_value_mgdl', 'heart_rate'],
-        'occasional': ['Fast-Acting Insulin Value (u)', 'Carb Value (grams)'],
+        'occasional_sum': ['Fast-Acting Insulin Value (u)', 'Carb Value (grams)'],
         'service': ['Event Type']
     }
     
