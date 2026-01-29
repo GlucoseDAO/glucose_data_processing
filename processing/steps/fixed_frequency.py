@@ -350,10 +350,7 @@ class FixedFreqGenerator:
         if missing_cols:
             for col in missing_cols:
                 col_type = seq_data.schema[col]
-                if col_type == pl.Utf8 or col_type == pl.String:
-                    result_df = result_df.with_columns([pl.lit('').cast(col_type).alias(col)])
-                else:
-                    result_df = result_df.with_columns([pl.lit(None).cast(col_type).alias(col)])
+                result_df = result_df.with_columns([pl.lit(None).cast(col_type).alias(col)])
         
         result_df = result_df.select(seq_data.columns)
         

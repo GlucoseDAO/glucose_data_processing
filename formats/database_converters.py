@@ -8,7 +8,7 @@ of different database structures (mono-user vs multi-user).
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union, Iterable
 import polars as pl
 from loguru import logger
 from formats.base_converter import CSVFormatConverter
@@ -54,6 +54,20 @@ class DatabaseConverter(ABC):
             Consolidated DataFrame
         """
         pass
+
+    @abstractmethod
+    def iter_user_event_frames(self, data_folder: Union[str, Path], *, interval_minutes: int) -> Iterable[pl.DataFrame]:
+        """
+        Iterate over users and return a DataFrame for each user.
+        
+        Args:
+            data_folder: Path to the data folder
+            interval_minutes: Expected interval between readings
+            
+        Returns:
+            An iterable of DataFrames, one per user
+        """
+        pass
     
     def _enforce_output_schema(self, df: pl.DataFrame | pl.LazyFrame) -> pl.DataFrame | pl.LazyFrame:
         """
@@ -79,7 +93,7 @@ class DatabaseConverter(ABC):
         # Add missing columns with empty-string placeholders.
         for field in required_fields:
             if field not in existing_columns:
-                df = df.with_columns(pl.lit("").alias(field))
+                df = df.with_columns(pl.lit(None).alias(field))
         
         # Update existing columns list after additions
         existing_columns = df.collect_schema().names() if is_lazy else df.columns
@@ -127,114 +141,13 @@ class MonoUserDatabaseConverter(DatabaseConverter):
         Returns:
             Consolidated DataFrame with processed data
         """
-        csv_path = Path(data_folder)
-        
-        if not csv_path.exists():
-            raise FileNotFoundError(f"Data folder not found: {data_folder}")
-        
-        if not csv_path.is_dir():
-            raise ValueError(f"Input must be a directory containing CSV files, got: {data_folder}")
-        
-        all_data = []
-        
-        # Get all CSV and TXT files (including in subdirectories, sorted for deterministic processing order)
-        csv_files = list(csv_path.glob("**/*.csv"))
-        txt_files = list(csv_path.glob("**/*.txt"))
-        all_files = sorted(csv_files + txt_files)
-        
-        if not all_files:
-            raise ValueError(f"No CSV or TXT files found in directory: {data_folder}")
-        
-        logger.info(f"Found {len(all_files)} files to consolidate")
-        
-        for data_file in all_files:
-            logger.info(f"Processing: {data_file.name}")
-            file_data = self._process_csv_file(data_file)
-            all_data.extend(file_data)
-            logger.info(f"  OK: Extracted {len(file_data)} records")
-        
-        logger.info(f"\nTotal records collected: {len(all_data):,}")
-        
-        if not all_data:
+        # For backward compatibility and simple cases, we just use the first user
+        # (which is the only user in MonoUser)
+        all_dfs = list(self.iter_user_event_frames(data_folder, interval_minutes=5))
+        if not all_dfs:
             raise ValueError("No valid data found in CSV files!")
         
-        # Ensure all records have all required fields before DataFrame creation.
-        # This prevents Polars from dropping columns when some records don't have them.
-        # Use None for missing values to avoid coercing types (e.g. timestamp to string).
-        output_fields = CSVFormatConverter.get_output_fields()
-        for record in all_data:
-            for field in output_fields:
-                if field not in record:
-                    record[field] = ""
-            # Coerce any non-string values to strings to avoid Polars schema inference conflicts
-            # (some converters may emit numeric types depending on dataset quirks)
-            for k, v in list(record.items()):
-                if v is None or isinstance(v, str):
-                    continue
-                record[k] = str(v)
-        
-        # Convert to DataFrame with an explicit string schema to avoid type inference conflicts
-        # (some fields can appear as numbers in some files and strings in others)
-        all_columns: set[str] = set()
-        for record in all_data:
-            all_columns.update(record.keys())
-        schema_overrides = {col: pl.Utf8 for col in all_columns}
-        df = pl.DataFrame(all_data, schema_overrides=schema_overrides)
-        
-        # Enforce output schema to ensure all default fields are present
-        df = self._enforce_output_schema(df)
-        
-        # Parse timestamps and sort
-        logger.info("Parsing timestamps and sorting...")
-        # timestamp column now uses standard name and may already be datetime or string
-        # Try to parse if it's a string using native Polars expressions (faster than map_elements)
-        timestamp_col_type = df['timestamp'].dtype
-        if timestamp_col_type in [pl.Utf8, pl.String]:
-            # Try multiple timestamp formats using coalesce - runs in Rust, much faster
-            df = df.with_columns(
-                pl.coalesce(
-                    pl.col('timestamp').str.to_datetime("%Y-%m-%dT%H:%M:%S", strict=False),
-                    pl.col('timestamp').str.to_datetime("%Y-%m-%d %H:%M:%S", strict=False),
-                    pl.col('timestamp').str.to_datetime("%Y-%m-%d %H:%M:%S%.f", strict=False),
-                ).alias('timestamp')
-            )
-        
-        # Remove rows where timestamp parsing failed
-        df = df.filter(pl.col('timestamp').is_not_null())
-        
-        logger.info(f"Records with valid timestamps: {len(df):,}")
-        
-        # Sort by timestamp (oldest first)
-        df = df.sort('timestamp')
-        
-        # De-duplicate records with identical timestamps
-        logger.info("De-duplicating records with identical timestamps...")
-        
-        # Aggregate logic: 
-        # - For numeric columns: sum them (after converting to float)
-        # - For string columns: pick the first non-empty value
-        
-        # First, ensure we have a common timestamp without user_id if multi-user
-        group_cols = ['timestamp']
-        if 'user_id' in df.columns:
-            group_cols.append('user_id')
-            
-        agg_exprs = []
-        for col in df.columns:
-            if col in group_cols:
-                continue
-            
-            # Check if column is likely numeric
-            # We try to cast to float. If it works for most non-empty values, it's numeric.
-            # For now, we'll use a simpler heuristic or just handle strings carefully.
-            agg_exprs.append(
-                pl.col(col).filter(pl.col(col) != "").first().fill_null(pl.lit("")).alias(col)
-            )
-        
-        df = df.group_by(group_cols).agg(agg_exprs).sort(group_cols)
-        
-        # Apply database-specific processing
-        df = self._apply_database_specific_processing(df)
+        df = all_dfs[0]
         
         # Write to output file
         if output_file:
@@ -252,6 +165,106 @@ class MonoUserDatabaseConverter(DatabaseConverter):
             logger.info(f"Date range: {first_date} to {last_date}")
 
         return df
+
+    def iter_user_event_frames(self, data_folder: Union[str, Path], *, interval_minutes: int) -> Iterable[pl.DataFrame]:
+        """
+        Iterate over users and return a DataFrame for each user.
+        For MonoUserDatabaseConverter, this yields a single DataFrame for the entire folder.
+        """
+        csv_path = Path(data_folder)
+        
+        if not csv_path.exists():
+            raise FileNotFoundError(f"Data folder not found: {data_folder}")
+        
+        if not csv_path.is_dir():
+            raise ValueError(f"Input must be a directory containing CSV files, got: {data_folder}")
+        
+        # Use folder name as user_id for mono-user databases
+        user_id = csv_path.name
+        
+        all_data = []
+        
+        # Get all CSV and TXT files (including in subdirectories, sorted for deterministic processing order)
+        csv_files = list(csv_path.glob("**/*.csv"))
+        txt_files = list(csv_path.glob("**/*.txt"))
+        all_files = sorted(csv_files + txt_files)
+        
+        if not all_files:
+            logger.warning(f"No CSV or TXT files found in directory: {data_folder}")
+            return
+        
+        logger.info(f"Found {len(all_files)} files to consolidate for user {user_id}")
+        
+        for data_file in all_files:
+            logger.info(f"Processing: {data_file.name}")
+            file_data = self._process_csv_file(data_file)
+            # Add user_id to each record
+            for record in file_data:
+                record['user_id'] = user_id
+            all_data.extend(file_data)
+            logger.info(f"  OK: Extracted {len(file_data)} records")
+        
+        if not all_data:
+            return
+            
+        # Ensure all records have all required fields before DataFrame creation.
+        output_fields = CSVFormatConverter.get_output_fields()
+        for record in all_data:
+            for field in output_fields:
+                if field not in record:
+                    record[field] = None
+            # Coerce any non-string values to strings to avoid Polars schema inference conflicts
+            for k, v in list(record.items()):
+                if v is None or isinstance(v, str):
+                    continue
+                record[k] = str(v)
+        
+        # Convert to DataFrame with an explicit string schema
+        all_columns: set[str] = set()
+        for record in all_data:
+            all_columns.update(record.keys())
+        schema_overrides = {col: pl.Utf8 for col in all_columns}
+        df = pl.DataFrame(all_data, schema_overrides=schema_overrides)
+        
+        # Enforce output schema
+        df = self._enforce_output_schema(df)
+        
+        # Parse timestamps and sort
+        logger.info(f"Parsing timestamps and sorting for user {user_id}...")
+        timestamp_col_type = df['timestamp'].dtype
+        if timestamp_col_type in [pl.Utf8, pl.String]:
+            df = df.with_columns(
+                pl.coalesce(
+                    pl.col('timestamp').str.to_datetime("%Y-%m-%dT%H:%M:%S", strict=False),
+                    pl.col('timestamp').str.to_datetime("%Y-%m-%d %H:%M:%S", strict=False),
+                    pl.col('timestamp').str.to_datetime("%Y-%m-%d %H:%M:%S%.f", strict=False),
+                ).alias('timestamp')
+            )
+        
+        # Remove rows where timestamp parsing failed
+        df = df.filter(pl.col('timestamp').is_not_null())
+        
+        # Sort by timestamp (oldest first)
+        df = df.sort('timestamp')
+        
+        # De-duplicate records with identical timestamps
+        logger.info(f"De-duplicating records for user {user_id}...")
+        group_cols = ['timestamp', 'user_id']
+            
+        agg_exprs = []
+        for col in df.columns:
+            if col in group_cols:
+                continue
+            agg_exprs.append(
+                pl.col(col).filter(pl.col(col).is_not_null()).first().alias(col)
+            )
+        
+        df = df.group_by(group_cols).agg(agg_exprs).sort(group_cols)
+        
+        # Apply database-specific processing
+        df = self._apply_database_specific_processing(df)
+        
+        yield df
     
     def _process_csv_file(self, file_path: Path) -> List[Dict[str, Any]]:
         """Process a single CSV file and extract required fields using format detection."""
@@ -343,109 +356,17 @@ class MultiUserDatabaseConverter(DatabaseConverter):
     def consolidate_data(self, data_folder: Union[str, Path], output_file: Optional[Union[str, Path]] = None) -> pl.DataFrame:
         """
         Consolidate multi-user data from multiple CSV files.
-        
-        Args:
-            data_folder: Path to folder containing CSV files organized by user/data type
-            output_file: Optional path to save consolidated data
-            
-        Returns:
-            Consolidated DataFrame with user ID tracking
         """
-        data_path = Path(data_folder)
-        
-        if not data_path.exists():
-            raise FileNotFoundError(f"Data folder not found: {data_folder}")
-        
-        if not data_path.is_dir():
-            raise ValueError(f"Input must be a directory, got: {data_folder}")
-        
-        all_user_data = []
-        
-        # Process each user separately (sorted for deterministic processing order)
-        users_processed = self._identify_users(data_path)
-        
-        # Apply start_with_user_id skipping if specified
-        start_user_id = self._get_start_with_user_id()
-        sorted_users = sorted(users_processed.items(), key=lambda x: x[0])
-        
-        if start_user_id:
-            start_index = 0
-            found = False
-            for i, (user_id, _) in enumerate(sorted_users):
-                if user_id == start_user_id:
-                    start_index = i
-                    found = True
-                    break
-            if found:
-                logger.info(f"Skipping users before {start_user_id} (found at index {start_index})")
-                sorted_users = sorted_users[start_index:]
-            else:
-                logger.info(f"Warning: start_with_user_id '{start_user_id}' not found in database. Processing all users.")
-
-        # Apply first_n_users filtering if specified
-        first_n_users = self.config.get('first_n_users')
-        if first_n_users and first_n_users > 0:
-            users_processed = dict(sorted_users[:first_n_users])
-            logger.info(f"Found {len(users_processed)} users to process (limited to first {first_n_users} users)")
-        else:
-            users_processed = dict(sorted_users)
-            logger.info(f"Found {len(users_processed)} users to process")
-        
-        for user_id, user_files in sorted(users_processed.items()):
-            logger.info(f"\nProcessing user: {user_id}")
-            user_data = self._process_user_data(user_id, user_files)
-            if user_data:
-                all_user_data.extend(user_data)
-                logger.info(f"  OK: Extracted {len(user_data)} records for user {user_id}")
-        
-        logger.info(f"\nTotal records collected: {len(all_user_data):,}")
-        
-        if not all_user_data:
+        # For multi-user, we use the iterator to collect all data
+        all_dfs = []
+        for user_df in self.iter_user_event_frames(data_folder, interval_minutes=5):
+            all_dfs.append(user_df)
+            
+        if not all_dfs:
             raise ValueError("No valid data found in data files!")
-        
-        # Ensure all records have all required fields before DataFrame creation.
-        # This prevents Polars from dropping columns when some records don't have them.
-        # Use None for missing values to avoid coercing types (e.g. timestamp to string).
-        output_fields = CSVFormatConverter.get_output_fields()
-        for record in all_user_data:
-            for field in output_fields:
-                if field not in record:
-                    record[field] = ""
-            # Coerce any non-string values to strings to avoid Polars schema inference conflicts
-            for k, v in list(record.items()):
-                if v is None or isinstance(v, str):
-                    continue
-                record[k] = str(v)
-        
-        # Convert to DataFrame with an explicit string schema to avoid type inference conflicts
-        all_columns: set[str] = set()
-        for record in all_user_data:
-            all_columns.update(record.keys())
-        schema_overrides = {col: pl.Utf8 for col in all_columns}
-        df = pl.DataFrame(all_user_data, schema_overrides=schema_overrides)
-        
-        # Enforce output schema to ensure all default fields are present (should already be there, but double-check)
-        df = self._enforce_output_schema(df)
-        
-        # Parse timestamps and sort by user and timestamp
-        logger.info("Parsing timestamps and sorting by user and time...")
-        # timestamp column now uses standard name and may already be datetime or string
-        # Try to parse if it's a string using native Polars expressions (faster than map_elements)
-        timestamp_col_type = df['timestamp'].dtype
-        if timestamp_col_type in [pl.Utf8, pl.String]:
-            # Try multiple timestamp formats using coalesce - runs in Rust, much faster
-            df = df.with_columns(
-                pl.coalesce(
-                    pl.col('timestamp').str.to_datetime("%Y-%m-%dT%H:%M:%S", strict=False),
-                    pl.col('timestamp').str.to_datetime("%Y-%m-%d %H:%M:%S", strict=False),
-                    pl.col('timestamp').str.to_datetime("%Y-%m-%d %H:%M:%S%.f", strict=False),
-                ).alias('timestamp')
-            )
-        
-        # Remove rows where timestamp parsing failed
-        df = df.filter(pl.col('timestamp').is_not_null())
-        
-        logger.info(f"Records with valid timestamps: {len(df):,}")
+            
+        # Combine all user dataframes
+        df = pl.concat(all_dfs)
         
         # Sort by user_id and timestamp (each user's data sorted individually)
         df = df.sort(['user_id', 'timestamp'])
@@ -465,7 +386,101 @@ class MultiUserDatabaseConverter(DatabaseConverter):
             logger.info(f"  User {row['user_id']}: {row['len']:,} records")
 
         return df
-    
+
+    def iter_user_event_frames(self, data_folder: Union[str, Path], *, interval_minutes: int) -> Iterable[pl.DataFrame]:
+        """
+        Iterate over users and return a DataFrame for each user.
+        """
+        data_path = Path(data_folder)
+        
+        if not data_path.exists():
+            raise FileNotFoundError(f"Data folder not found: {data_folder}")
+        
+        if not data_path.is_dir():
+            raise ValueError(f"Input must be a directory, got: {data_folder}")
+        
+        # Process each user separately (sorted for deterministic processing order)
+        users_processed = self._identify_users(data_path)
+        
+        # Debug: Check identified users
+        logger.info(f"DEBUG: Identified {len(users_processed)} users in {data_path}")
+        if len(users_processed) > 0:
+            logger.info(f"DEBUG: First 5 users: {list(sorted(users_processed.keys()))[:5]}")
+        
+        # Apply start_with_user_id skipping if specified
+        start_user_id = self._get_start_with_user_id()
+        sorted_users_list = sorted(users_processed.items(), key=lambda x: x[0])
+        
+        if start_user_id:
+            start_index = 0
+            found = False
+            for i, (user_id, _) in enumerate(sorted_users_list):
+                if user_id == start_user_id:
+                    start_index = i
+                    found = True
+                    break
+            if found:
+                logger.info(f"Skipping users before {start_user_id} (found at index {start_index})")
+                sorted_users_list = sorted_users_list[start_index:]
+            else:
+                logger.info(f"Warning: start_with_user_id '{start_user_id}' not found in database. Processing all users.")
+
+        # Apply first_n_users filtering if specified
+        first_n_users = self.config.get('first_n_users')
+        if first_n_users and first_n_users > 0:
+            final_users_list = sorted_users_list[:first_n_users]
+            logger.info(f"Found {len(users_processed)} users to process (limited to first {first_n_users} users)")
+        else:
+            final_users_list = sorted_users_list
+            logger.info(f"Found {len(users_processed)} users to process")
+        
+        for user_id, user_files in final_users_list:
+            logger.info(f"\nProcessing user: {user_id}")
+            user_data = self._process_user_data(user_id, user_files)
+            if not user_data:
+                continue
+                
+            # Ensure all records have all required fields
+            output_fields = CSVFormatConverter.get_output_fields()
+            for record in user_data:
+                for field in output_fields:
+                    if field not in record:
+                        record[field] = None
+                # Coerce any non-string values to strings to avoid Polars schema inference conflicts
+                for k, v in list(record.items()):
+                    if v is None or isinstance(v, str):
+                        continue
+                    record[k] = str(v)
+            
+            # Convert to DataFrame with an explicit string schema
+            all_columns: set[str] = set()
+            for record in user_data:
+                all_columns.update(record.keys())
+            schema_overrides = {col: pl.Utf8 for col in all_columns}
+            df = pl.DataFrame(user_data, schema_overrides=schema_overrides)
+            
+            # Enforce output schema
+            df = self._enforce_output_schema(df)
+            
+            # Parse timestamps and sort
+            timestamp_col_type = df['timestamp'].dtype
+            if timestamp_col_type in [pl.Utf8, pl.String]:
+                df = df.with_columns(
+                    pl.coalesce(
+                        pl.col('timestamp').str.to_datetime("%Y-%m-%dT%H:%M:%S", strict=False),
+                        pl.col('timestamp').str.to_datetime("%Y-%m-%d %H:%M:%S", strict=False),
+                        pl.col('timestamp').str.to_datetime("%Y-%m-%d %H:%M:%S%.f", strict=False),
+                    ).alias('timestamp')
+                )
+            
+            # Remove rows where timestamp parsing failed
+            df = df.filter(pl.col('timestamp').is_not_null())
+            
+            # Sort by user_id and timestamp
+            df = df.sort(['user_id', 'timestamp'])
+            
+            yield df
+
     def _identify_users(self, data_path: Path) -> Dict[str, List[Path]]:
         """
         Identify users and their associated files.

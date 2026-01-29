@@ -304,7 +304,7 @@ class ValueInterpolator:
                     final_cols.append(
                         pl.when(pl.col('prev_user_id').is_not_null())
                         .then(pl.col('prev_user_id'))
-                        .otherwise(pl.lit(''))
+                        .otherwise(None)
                         .alias(user_id_col)
                     )
                 
@@ -318,19 +318,7 @@ class ValueInterpolator:
                 for col in df.columns:
                     if col not in existing_col_names:
                         col_type = original_schema[col]
-                        is_occasional = col in field_categories_dict.get('occasional', [])
-                        is_service = col in field_categories_dict.get('service', [])
-                        
-                        if is_occasional or is_service:
-                            if col_type == pl.Utf8 or col_type == pl.String:
-                                final_cols.append(pl.lit('').cast(col_type).alias(col))
-                            else:
-                                final_cols.append(pl.lit(None).cast(col_type).alias(col))
-                        else:
-                            if col_type == pl.Utf8 or col_type == pl.String:
-                                final_cols.append(pl.lit('').cast(col_type).alias(col))
-                            else:
-                                final_cols.append(pl.lit(None).cast(col_type).alias(col))
+                        final_cols.append(pl.lit(None).cast(col_type).alias(col))
                 
                 interpolated_df = interpolated_df.select(final_cols)
                 interpolated_df = interpolated_df.select(df.columns)

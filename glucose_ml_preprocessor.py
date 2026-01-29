@@ -70,7 +70,9 @@ def _run_processing_pipeline(
     stats_manager: StatsManager,
     create_fixed_frequency: bool,
     log_steps: bool = False,
-    last_step: int = 0
+    last_step: int = 0,
+    save_intermediate: bool = False,
+    output_prefix: Optional[str] = None
 ) -> Tuple[pl.DataFrame, Dict[str, Any], int]:
     """
     Common processing pipeline used by both sequential and parallel processing modes.
@@ -90,22 +92,42 @@ def _run_processing_pipeline(
     fixed_freq_stats = {}
     glucose_filter_stats = {}
 
+    def _save_intermediate(current_df: pl.DataFrame, step_num: int):
+        if not save_intermediate or output_prefix is None:
+            return
+        output_dir = Path("OUTPUT")
+        output_dir.mkdir(exist_ok=True)
+        # Sanitize output_prefix to avoid path issues with .zip in name
+        clean_prefix = str(output_prefix).replace(".zip", "_zip").replace(".", "_").replace("/", "_").replace("\\", "_")
+        filename = f"{clean_prefix}_step_{step_num}.csv"
+        target_path = output_dir / filename
+        current_df.write_csv(target_path)
+
     # Internal helper to handle early exit with data preparation
     def early_exit(current_df: pl.DataFrame, c_stats, g_stats, i_stats, f_stats, ff_stats, gf_stats, last_seq_id):
         # Always prepare data (cast and rename) for consistent output even on early exit
+        new_last_seq_id = last_seq_id
         if StandardFieldNames.SEQUENCE_ID not in current_df.columns:
-            current_df = current_df.with_columns(pl.lit(0).alias(StandardFieldNames.SEQUENCE_ID))
+            # If we are exiting before Step 3 (Gap Detection), we haven't assigned sequence IDs yet.
+            # To allow multi-user merging to work correctly in Step 1 and 2, 
+            # we assign a temporary sequence ID of 1 to this user's chunk.
+            # This ensures that when handle_result() remaps IDs, each user gets a unique ID.
+            current_df = current_df.with_columns(pl.lit(1).alias(StandardFieldNames.SEQUENCE_ID))
+            new_last_seq_id = 1
+        
         ml_df = ml_preparer.prepare_ml_data(current_df, field_categories_dict)
         stats = stats_manager.get_statistics(ml_df, g_stats, i_stats, f_stats, gf_stats, ff_stats, cleaning_stats=c_stats)
-        return ml_df, stats, last_seq_id
+        return ml_df, stats, new_last_seq_id
 
     if last_step == 1:
+        _save_intermediate(df, 1)
         return early_exit(df, cleaning_stats, gap_stats, interp_stats, filter_stats, fixed_freq_stats, glucose_filter_stats, last_sequence_id)
 
     # STEP 2: Data cleaning (removing covariates in large glucose gaps)
     if log_steps:
         logger.info("STEP 2: Data cleaning (removing covariates in large glucose gaps)...")
     df, cleaning_stats = data_cleaner.clean_remote_data(df, field_categories_dict)
+    _save_intermediate(df, 2)
     if last_step == 2:
         return early_exit(df, cleaning_stats, gap_stats, interp_stats, filter_stats, fixed_freq_stats, glucose_filter_stats, last_sequence_id)
 
@@ -113,6 +135,7 @@ def _run_processing_pipeline(
     if log_steps:
         logger.info("STEP 3: Detecting gaps and creating sequences...")
     df, gap_stats, last_sequence_id = gap_detector.detect_gaps_and_sequences(df, last_sequence_id, field_categories_dict)
+    _save_intermediate(df, 3)
     if last_step == 3:
         return early_exit(df, cleaning_stats, gap_stats, interp_stats, filter_stats, fixed_freq_stats, glucose_filter_stats, last_sequence_id)
     
@@ -120,6 +143,7 @@ def _run_processing_pipeline(
     if log_steps:
         logger.info("STEP 4: Interpolating missing values...")
     df, interp_stats = interpolator.interpolate_missing_values(df, field_categories_dict)
+    _save_intermediate(df, 4)
     if last_step == 4:
         return early_exit(df, cleaning_stats, gap_stats, interp_stats, filter_stats, fixed_freq_stats, glucose_filter_stats, last_sequence_id)
     
@@ -127,6 +151,7 @@ def _run_processing_pipeline(
     if log_steps:
         logger.info("STEP 5: Filtering sequences by minimum length...")
     df, filter_stats = filter_step.filter_sequences_by_length(df)
+    _save_intermediate(df, 5)
     if last_step == 5:
         return early_exit(df, cleaning_stats, gap_stats, interp_stats, filter_stats, fixed_freq_stats, glucose_filter_stats, last_sequence_id)
     
@@ -135,6 +160,7 @@ def _run_processing_pipeline(
         if log_steps:
             logger.info("STEP 6: Creating fixed-frequency data...")
         df, fixed_freq_stats = fixed_freq_generator.create_fixed_frequency_data(df, field_categories_dict)
+        _save_intermediate(df, 6)
     if last_step == 6:
         return early_exit(df, cleaning_stats, gap_stats, interp_stats, filter_stats, fixed_freq_stats, glucose_filter_stats, last_sequence_id)
     
@@ -142,6 +168,7 @@ def _run_processing_pipeline(
     if log_steps:
         logger.info("STEP 7: Filtering to glucose-only data...")
     df, glucose_filter_stats = filter_step.filter_glucose_only(df)
+    _save_intermediate(df, 7)
     if last_step == 7:
         return early_exit(df, cleaning_stats, gap_stats, interp_stats, filter_stats, fixed_freq_stats, glucose_filter_stats, last_sequence_id)
     
@@ -149,6 +176,7 @@ def _run_processing_pipeline(
     if log_steps:
         logger.info("STEP 8: Preparing final ML dataset...")
     ml_df = ml_preparer.prepare_ml_data(df, field_categories_dict)
+    _save_intermediate(df, 8)
     
     stats = stats_manager.get_statistics(
         ml_df, gap_stats, interp_stats, filter_stats, glucose_filter_stats, fixed_freq_stats, cleaning_stats=cleaning_stats
@@ -165,6 +193,7 @@ def _process_user_frame_task(
     """
     Standalone task for processing a single user's data in a worker process.
     """
+    save_intermediate_files = params.get('save_intermediate_files', False)
     # Initialize components
     gap_detector = GapDetector(
         small_gap_max_minutes=params['small_gap_max_minutes'],
@@ -194,7 +223,9 @@ def _process_user_frame_task(
         user_df, 0, field_categories_dict,
         gap_detector, data_cleaner, interpolator, filter_step, fixed_freq_generator, ml_preparer, stats_manager,
         params['create_fixed_frequency'],
-        last_step=params.get('last_step', 0)
+        last_step=params.get('last_step', 0),
+        save_intermediate=save_intermediate_files,
+        output_prefix=params.get('output_prefix', f"user_{user_df['user_id'][0] if 'user_id' in user_df.columns else 'unknown'}")
     )
     
     # We return the max sequence ID from gap detection to maintain parity with sequential processing
@@ -335,12 +366,15 @@ class GlucoseMLPreprocessor:
         return max(1, n)
 
     def _write_csv_append(self, df: pl.DataFrame, *, output_file: Path, include_header: bool) -> None:
+        if len(df) == 0:
+            return
         with open(output_file, "ab") as f:
             df.write_csv(f, include_header=include_header)
 
     def _compute_expected_output_columns(self, database_types: List[str]) -> List[str]:
         field_to_display = CSVFormatConverter.get_field_to_display_name_map()
         seq_id_col = StandardFieldNames.SEQUENCE_ID
+        user_id_col = StandardFieldNames.USER_ID
         dataset_name_col = StandardFieldNames.DATASET_NAME
 
         if bool(self.config.get("restrict_output_to_config_fields", False)):
@@ -349,6 +383,8 @@ class GlucoseMLPreprocessor:
             service_keep = {str(x) for x in service_allow} if isinstance(service_allow, list) else set()
 
             cols = [seq_id_col]
+            if user_id_col not in output_fields:
+                cols.append(field_to_display.get(user_id_col, user_id_col))
             if len(database_types) > 1:
                 cols.append(field_to_display.get(dataset_name_col, dataset_name_col))
             for c in output_fields:
@@ -368,10 +404,13 @@ class GlucoseMLPreprocessor:
             return out
 
         cols: List[str] = [seq_id_col]
+        # Always include user_id in standardized output
+        cols.append(field_to_display.get(user_id_col, user_id_col))
+        
         if len(database_types) > 1:
             cols.append(field_to_display.get(dataset_name_col, dataset_name_col))
         for f in CSVFormatConverter.get_output_fields():
-            if f == seq_id_col:
+            if f == seq_id_col or f == user_id_col:
                 continue
             cols.append(field_to_display.get(f, f))
 
@@ -447,6 +486,7 @@ class GlucoseMLPreprocessor:
             'glucose_only': self.glucose_only,
             'create_fixed_frequency': self.create_fixed_frequency,
             'last_step': self.last_step,
+            'save_intermediate_files': self.save_intermediate_files,
             'output_fields': output_fields,
             'config': self.config,
             'verbose': self.verbose
@@ -662,7 +702,9 @@ class GlucoseMLPreprocessor:
             self.gap_detector, self.data_cleaner, self.interpolator, self.filter_step, self.fixed_freq_generator, self.ml_preparer, self.stats_manager,
             self.create_fixed_frequency,
             log_steps=True,
-            last_step=self.last_step
+            last_step=self.last_step,
+            save_intermediate=self.save_intermediate_files,
+            output_prefix=output_file.stem if output_file else "processed"
         )
         
         if output_file:
@@ -757,7 +799,9 @@ class GlucoseMLPreprocessor:
                             user_df, current_last_sequence_id, field_categories_dict,
                             self.gap_detector, self.data_cleaner, self.interpolator, self.filter_step, self.fixed_freq_generator, self.ml_preparer, self.stats_manager,
                             self.create_fixed_frequency,
-                            last_step=self.last_step
+                            last_step=self.last_step,
+                            save_intermediate=self.save_intermediate_files,
+                            output_prefix=f"{data_folder.name}_{user_df['user_id'][0] if 'user_id' in user_df.columns else 'user'}"
                         )
                         
                         # Add dataset name in multi-database mode

@@ -196,7 +196,7 @@ class CSVFormatConverter(ABC):
                 filtered[display_name] = value
         return filtered
     
-    def _get_clean_value(self, row: Dict[str, str], key: str) -> str:
+    def _get_clean_value(self, row: Dict[str, str], key: str) -> Optional[str]:
         """
         Get value from row with BOM handling.
         
@@ -205,14 +205,18 @@ class CSVFormatConverter(ABC):
             key: Field name to retrieve
             
         Returns:
-            Cleaned value string
+            Cleaned value string or None if empty
         """
-        value = row.get(key, '')
-        if not value:
+        value = row.get(key)
+        if value is None or value.strip() == '':
             # Try with BOM prefix
             bom_key = '\ufeff' + key
-            value = row.get(bom_key, '')
-        return value.strip() if value else ''
+            value = row.get(bom_key)
+        
+        if value is None or value.strip() == '':
+            return None
+            
+        return value.strip()
     
     def _get_source_fields(self, row: Dict[str, str]) -> set:
         """

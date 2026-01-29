@@ -181,6 +181,7 @@ class AIReadyDatabaseConverter(DatabaseConverter):
             logger.info(f"Processing {len(user_ids)} AI-READY users...")
 
             for user_id in user_ids:
+                logger.info(f"Processing AI-READY user: {user_id}")
                 df = self._extract_user_frame(zip_ref, layout, user_id, participants[user_id], interval_minutes=interval_minutes)
                 if len(df) > 0:
                     yield df
