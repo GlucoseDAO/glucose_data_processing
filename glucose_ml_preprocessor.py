@@ -80,7 +80,8 @@ def _run_processing_pipeline(
     last_step: int = 0,
     save_intermediate: bool = False,
     output_dir: Optional[Path] = None,
-    output_prefix: Optional[str] = None
+    output_prefix: Optional[str] = None,
+    expected_standard_cols: Optional[List[str]] = None
 ) -> Tuple[pl.DataFrame, Dict[str, Any], int]:
     """
     Common processing pipeline used by both sequential and parallel processing modes.
@@ -111,6 +112,16 @@ def _run_processing_pipeline(
         clean_prefix = str(output_prefix).replace(".zip", "_zip").replace(".", "_").replace("/", "_").replace("\\", "_")
         filename = f"{clean_prefix}_step_{step_num}.csv"
         target_path = target_dir / filename
+
+        # Align columns to expected_standard_cols if available
+        if expected_standard_cols:
+            missing = [c for c in expected_standard_cols if c not in current_df.columns]
+            if missing:
+                current_df = current_df.with_columns([pl.lit(None).alias(c) for c in missing])
+            
+            # Use only expected columns and in correct order
+            available_expected = [c for c in expected_standard_cols if c in current_df.columns]
+            current_df = current_df.select(available_expected)
         
         # Use a global lock if available to prevent interleaved writes from multiple processes
         global _worker_lock
@@ -187,7 +198,8 @@ def _run_processing_pipeline(
     if log_steps:
         logger.info("STEP 7: Filtering to glucose-only data...")
     df, glucose_filter_stats = filter_step.filter_glucose_only(df)
-    _save_intermediate(df, 7)
+    if filter_step.glucose_only:
+        _save_intermediate(df, 7)
     if last_step == 7:
         return early_exit(df, cleaning_stats, gap_stats, interp_stats, filter_stats, fixed_freq_stats, glucose_filter_stats, last_sequence_id)
     
@@ -207,7 +219,8 @@ def _process_user_frame_task(
     user_df: pl.DataFrame,
     params: Dict[str, Any],
     field_categories_dict: Optional[Dict[str, Any]],
-    expected_cols: List[str]
+    expected_cols: List[str],
+    expected_standard_cols: Optional[List[str]] = None
 ) -> Tuple[pl.DataFrame, Dict[str, Any], int]:
     """
     Standalone task for processing a single user's data in a worker process.
@@ -245,7 +258,8 @@ def _process_user_frame_task(
         last_step=params.get('last_step', 0),
         save_intermediate=save_intermediate_files,
         output_dir=params.get('output_dir'),
-        output_prefix=params.get('output_prefix')
+        output_prefix=params.get('output_prefix'),
+        expected_standard_cols=expected_standard_cols
     )
     
     # We return the max sequence ID from gap detection to maintain parity with sequential processing
@@ -404,8 +418,8 @@ class GlucoseMLPreprocessor:
         with open(output_file, "ab") as f:
             df.write_csv(f, include_header=include_header)
 
-    def _compute_expected_output_columns(self, database_types: List[str]) -> List[str]:
-        field_to_display = CSVFormatConverter.get_field_to_display_name_map()
+    def _compute_expected_output_columns(self, database_types: List[str], use_display_names: bool = True) -> List[str]:
+        field_to_display = CSVFormatConverter.get_field_to_display_name_map() if use_display_names else {}
         seq_id_col = StandardFieldNames.SEQUENCE_ID
         user_id_col = StandardFieldNames.USER_ID
         dataset_name_col = StandardFieldNames.DATASET_NAME
@@ -487,6 +501,7 @@ class GlucoseMLPreprocessor:
         output_file.write_text("", encoding="utf-8")
 
         expected_cols = self._compute_expected_output_columns([database_type])
+        expected_standard_cols = self._compute_expected_output_columns([database_type], use_display_names=False)
         max_bytes = self._streaming_buffer_max_bytes()
         max_users = self._streaming_flush_max_users()
 
@@ -630,7 +645,8 @@ class GlucoseMLPreprocessor:
                     user_df, 
                     params, 
                     field_categories_dict, 
-                    expected_cols
+                    expected_cols,
+                    expected_standard_cols
                 ))
                 
                 # If we reached the window size, wait for tasks in order to maintain sequence ID stability
@@ -746,6 +762,8 @@ class GlucoseMLPreprocessor:
         df = self.consolidate_glucose_data(csv_folder)
         
         # Use common processing pipeline for steps 2-8 (handles last_step internally)
+        expected_standard_cols = self._compute_expected_output_columns([db_type], use_display_names=False)
+        
         ml_df, stats, last_sequence_id = _run_processing_pipeline(
             df, last_sequence_id, field_categories_dict,
             self.gap_detector, self.data_cleaner, self.interpolator, self.filter_step, self.fixed_freq_generator, self.ml_preparer, self.stats_manager,
@@ -754,7 +772,8 @@ class GlucoseMLPreprocessor:
             last_step=self.last_step,
             save_intermediate=self.save_intermediate_files,
             output_dir=output_file.parent if output_file else Path("OUTPUT"),
-            output_prefix=output_file.stem if output_file else "processed"
+            output_prefix=output_file.stem if output_file else "processed",
+            expected_standard_cols=expected_standard_cols
         )
         
         if output_file:
@@ -785,6 +804,7 @@ class GlucoseMLPreprocessor:
 
         if streaming_capable and output_file:
             expected_cols = self._compute_expected_output_columns(db_types)
+            expected_standard_cols = self._compute_expected_output_columns(db_types, use_display_names=False)
             max_bytes = self._streaming_buffer_max_bytes()
             max_users = self._streaming_flush_max_users()
             output_file.write_text("", encoding="utf-8")
@@ -859,7 +879,8 @@ class GlucoseMLPreprocessor:
                             last_step=self.last_step,
                             save_intermediate=self.save_intermediate_files,
                             output_dir=output_file.parent if output_file else Path("OUTPUT"),
-                            output_prefix=output_file.stem if output_file else "combined"
+                            output_prefix=output_file.stem if output_file else "combined",
+                            expected_standard_cols=expected_standard_cols
                         )
                         
                         # Add dataset name in multi-database mode

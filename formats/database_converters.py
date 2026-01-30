@@ -196,13 +196,11 @@ class MonoUserDatabaseConverter(DatabaseConverter):
         logger.info(f"Found {len(all_files)} files to consolidate for user {user_id}")
         
         for data_file in all_files:
-            logger.info(f"Processing: {data_file.name}")
             file_data = self._process_csv_file(data_file)
             # Add user_id to each record
             for record in file_data:
                 record['user_id'] = user_id
             all_data.extend(file_data)
-            logger.info(f"  OK: Extracted {len(file_data)} records")
         
         if not all_data:
             return
@@ -277,8 +275,6 @@ class MonoUserDatabaseConverter(DatabaseConverter):
             if converter is None:
                 logger.info(f"Warning: Could not detect format for {file_path}, skipping file")
                 return data
-            
-            logger.info(f"Detected format: {converter.get_format_name()} for {file_path.name}")
             
             with open(file_path, 'r', encoding='utf-8-sig') as file:  # utf-8-sig handles BOM
                 lines = file.readlines()
@@ -402,11 +398,6 @@ class MultiUserDatabaseConverter(DatabaseConverter):
         # Process each user separately (sorted for deterministic processing order)
         users_processed = self._identify_users(data_path)
         
-        # Debug: Check identified users
-        logger.info(f"DEBUG: Identified {len(users_processed)} users in {data_path}")
-        if len(users_processed) > 0:
-            logger.info(f"DEBUG: First 5 users: {list(sorted(users_processed.keys()))[:5]}")
-        
         # Apply start_with_user_id skipping if specified
         start_user_id = self._get_start_with_user_id()
         sorted_users_list = sorted(users_processed.items(), key=lambda x: x[0])
@@ -435,7 +426,6 @@ class MultiUserDatabaseConverter(DatabaseConverter):
             logger.info(f"Found {len(users_processed)} users to process")
         
         for user_id, user_files in final_users_list:
-            logger.info(f"\nProcessing user: {user_id}")
             user_data = self._process_user_data(user_id, user_files)
             if not user_data:
                 continue
@@ -544,7 +534,6 @@ class MultiUserDatabaseConverter(DatabaseConverter):
         
         # Sort files for deterministic processing order
         for file_path in sorted(user_files):
-            logger.info(f"  Processing: {file_path.name}")
             file_data = self._process_csv_file(file_path, user_id)
             user_data.extend(file_data)
         
@@ -561,8 +550,6 @@ class MultiUserDatabaseConverter(DatabaseConverter):
             if converter is None:
                 logger.info(f"Warning: Could not detect format for {file_path}, skipping file")
                 return data
-            
-            logger.info(f"    Detected format: {converter.get_format_name()} for {file_path.name}")
             
             with open(file_path, 'r', encoding='utf-8-sig') as file:  # utf-8-sig handles BOM
                 lines = file.readlines()
