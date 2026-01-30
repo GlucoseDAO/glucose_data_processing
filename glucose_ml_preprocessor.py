@@ -21,6 +21,8 @@ import sys
 import json
 import concurrent.futures
 import os
+import contextlib
+import multiprocessing
 
 # Import database detection and conversion classes
 from formats import DatabaseDetector
@@ -44,10 +46,15 @@ DEFAULT_STREAMING_MAX_BUFFER_MB = 256
 DEFAULT_STREAMING_FLUSH_MAX_USERS = 10
 MIN_BUFFER_MB = 32
 
+_worker_lock = None
+
 def _init_worker_process(params: Dict[str, Any]) -> None:
     """Initialize worker process: configure logging and shared state."""
     verbose = params.get('verbose', False)
     config = params.get('config')
+    
+    global _worker_lock
+    _worker_lock = params.get('lock')
     
     # Configure loguru to show only the message, matching the CLI behavior
     logger.remove()
@@ -72,6 +79,7 @@ def _run_processing_pipeline(
     log_steps: bool = False,
     last_step: int = 0,
     save_intermediate: bool = False,
+    output_dir: Optional[Path] = None,
     output_prefix: Optional[str] = None
 ) -> Tuple[pl.DataFrame, Dict[str, Any], int]:
     """
@@ -95,13 +103,24 @@ def _run_processing_pipeline(
     def _save_intermediate(current_df: pl.DataFrame, step_num: int):
         if not save_intermediate or output_prefix is None:
             return
-        output_dir = Path("OUTPUT")
-        output_dir.mkdir(exist_ok=True)
+        
+        target_dir = output_dir if output_dir is not None else Path("OUTPUT")
+        target_dir.mkdir(exist_ok=True, parents=True)
+        
         # Sanitize output_prefix to avoid path issues with .zip in name
         clean_prefix = str(output_prefix).replace(".zip", "_zip").replace(".", "_").replace("/", "_").replace("\\", "_")
         filename = f"{clean_prefix}_step_{step_num}.csv"
-        target_path = output_dir / filename
-        current_df.write_csv(target_path)
+        target_path = target_dir / filename
+        
+        # Use a global lock if available to prevent interleaved writes from multiple processes
+        global _worker_lock
+        lock_ctx = _worker_lock if _worker_lock is not None else contextlib.nullcontext()
+        
+        with lock_ctx:
+            # When accumulating, we only write header if the file is new
+            include_header = not target_path.exists()
+            with open(target_path, "ab") as f:
+                current_df.write_csv(f, include_header=include_header)
 
     # Internal helper to handle early exit with data preparation
     def early_exit(current_df: pl.DataFrame, c_stats, g_stats, i_stats, f_stats, ff_stats, gf_stats, last_seq_id):
@@ -225,7 +244,8 @@ def _process_user_frame_task(
         params['create_fixed_frequency'],
         last_step=params.get('last_step', 0),
         save_intermediate=save_intermediate_files,
-        output_prefix=params.get('output_prefix', f"user_{user_df['user_id'][0] if 'user_id' in user_df.columns else 'unknown'}")
+        output_dir=params.get('output_dir'),
+        output_prefix=params.get('output_prefix')
     )
     
     # We return the max sequence ID from gap detection to maintain parity with sequential processing
@@ -272,6 +292,19 @@ class GlucoseMLPreprocessor:
             print_statistics=cli_overrides.get('print_statistics', config.get('print_statistics', True))
         )
     
+    @staticmethod
+    def _clear_intermediate_files(output_file: Path) -> None:
+        """Clear existing intermediate files to start fresh for accumulation."""
+        prefix = output_file.stem
+        odir = output_file.parent
+        for step in range(1, 9):
+            target = odir / f"{prefix}_step_{step}.csv"
+            if target.exists():
+                try:
+                    target.unlink()
+                except OSError:
+                    pass
+
     def __init__(
         self,
         expected_interval_minutes: int = 5,
@@ -476,6 +509,15 @@ class GlucoseMLPreprocessor:
         ts_col = StandardFieldNames.TIMESTAMP
         seq_id_col = StandardFieldNames.SEQUENCE_ID
 
+        # Prepare for intermediate file saving if enabled
+        lock = None
+        if self.save_intermediate_files and output_file:
+            # Use Manager().Lock() for ProcessPoolExecutor compatibility on all platforms
+            manager = multiprocessing.Manager()
+            lock = manager.Lock()
+            # Clear existing intermediate files to start fresh for accumulation
+            self._clear_intermediate_files(output_file)
+
         params = {
             'expected_interval_minutes': self.expected_interval_minutes,
             'small_gap_max_minutes': self.small_gap_max_minutes,
@@ -487,6 +529,9 @@ class GlucoseMLPreprocessor:
             'create_fixed_frequency': self.create_fixed_frequency,
             'last_step': self.last_step,
             'save_intermediate_files': self.save_intermediate_files,
+            'output_dir': output_file.parent if output_file else Path("OUTPUT"),
+            'output_prefix': output_file.stem if output_file else "processed",
+            'lock': lock,
             'output_fields': output_fields,
             'config': self.config,
             'verbose': self.verbose
@@ -678,6 +723,10 @@ class GlucoseMLPreprocessor:
         field_categories_dict = extract_field_categories(database_type) if database_type != 'unknown' else None
         self._field_categories_dict = field_categories_dict
         
+        # Clear existing intermediate files if enabled
+        if self.save_intermediate_files and output_file:
+            self._clear_intermediate_files(output_file)
+
         db_detector = DatabaseDetector()
         database_converter = db_detector.get_database_converter(database_type, self.config or {})
         if (
@@ -704,6 +753,7 @@ class GlucoseMLPreprocessor:
             log_steps=True,
             last_step=self.last_step,
             save_intermediate=self.save_intermediate_files,
+            output_dir=output_file.parent if output_file else Path("OUTPUT"),
             output_prefix=output_file.stem if output_file else "processed"
         )
         
@@ -753,6 +803,14 @@ class GlucoseMLPreprocessor:
             # Stats accumulation
             all_processing_stats: List[Dict[str, Any]] = []
 
+            # Prepare for intermediate file saving if enabled
+            lock = None
+            if self.save_intermediate_files:
+                # Use Manager().Lock() for potential ProcessPoolExecutor compatibility
+                manager = multiprocessing.Manager()
+                lock = manager.Lock()
+                self._clear_intermediate_files(output_file)
+
             def flush() -> None:
                 nonlocal wrote_header, buffered, buffered_bytes, buffered_users, total_records, total_sequences
                 if not buffered:
@@ -794,14 +852,14 @@ class GlucoseMLPreprocessor:
                         except (KeyError, AttributeError, ValueError):
                             pass
 
-                        # Use common processing pipeline (handles last_step internally)
                         ml_df, user_stats, current_last_sequence_id = _run_processing_pipeline(
                             user_df, current_last_sequence_id, field_categories_dict,
                             self.gap_detector, self.data_cleaner, self.interpolator, self.filter_step, self.fixed_freq_generator, self.ml_preparer, self.stats_manager,
                             self.create_fixed_frequency,
                             last_step=self.last_step,
                             save_intermediate=self.save_intermediate_files,
-                            output_prefix=f"{data_folder.name}_{user_df['user_id'][0] if 'user_id' in user_df.columns else 'user'}"
+                            output_dir=output_file.parent if output_file else Path("OUTPUT"),
+                            output_prefix=output_file.stem if output_file else "combined"
                         )
                         
                         # Add dataset name in multi-database mode
