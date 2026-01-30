@@ -762,7 +762,7 @@ class GlucoseMLPreprocessor:
         df = self.consolidate_glucose_data(csv_folder)
         
         # Use common processing pipeline for steps 2-8 (handles last_step internally)
-        expected_standard_cols = self._compute_expected_output_columns([db_type], use_display_names=False)
+        expected_standard_cols = self._compute_expected_output_columns([database_type], use_display_names=False)
         
         ml_df, stats, last_sequence_id = _run_processing_pipeline(
             df, last_sequence_id, field_categories_dict,
