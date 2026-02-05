@@ -182,7 +182,8 @@ def download_zenodo_record(record_url: str, output_dir: Path) -> bool:
         return False
     
     for file_info in files:
-        dest = output_dir / file_info["filename"]
+        # Flatten path: save to dataset dir directly (e.g. data/uom/file.zip), not sharpic/file.zip
+        dest = output_dir / Path(file_info["filename"]).name
         if not download_file_with_validation(
             file_info["url"],
             dest,
@@ -430,6 +431,9 @@ def download_file_with_validation(
     else:
         remote_size = None
     
+    # Ensure parent directories exist (Zenodo filenames can include path segments, e.g. sharpic/file.zip)
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+
     # Download with progress
     downloaded = 0
     with open(dest_path, "wb") as f:
@@ -484,12 +488,24 @@ def clone_github_repo(repo_url: str, dest_dir: Path) -> bool:
 
 
 def extract_zip(zip_path: Path, extract_dir: Path) -> bool:
-    """Extract a ZIP file to the specified directory."""
+    """Extract a ZIP file to the specified directory.
+    If the archive has a single top-level directory, its contents are moved
+    into extract_dir so the pipeline sees a flat structure (no intermediate folder).
+    """
     logger.info(f"Extracting: {zip_path.name}")
-    
+
     with zipfile.ZipFile(zip_path, "r") as zf:
         zf.extractall(extract_dir)
-    
+
+    # Flatten single top-level folder (e.g. sharpic-ManchesterCSCoordinatedDiabetesStudy-fdbd74f)
+    subdirs = [p for p in extract_dir.iterdir() if p.is_dir()]
+    if len(subdirs) == 1:
+        single_dir = subdirs[0]
+        for child in single_dir.iterdir():
+            shutil.move(str(child), str(extract_dir / child.name))
+        single_dir.rmdir()
+        logger.info(f"Flattened top-level folder into: {extract_dir}")
+
     logger.success(f"Extracted to: {extract_dir}")
     return True
 
