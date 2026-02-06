@@ -127,13 +127,19 @@ def sanitize_folder_name(name: str) -> str:
     return safe_name.strip("_-")
 
 
-def compute_md5(file_path: Path) -> str:
-    """Compute MD5 hash of a file."""
-    md5 = hashlib.md5()
+def compute_hash(file_path: Path, algorithm: str = "md5") -> str:
+    """Compute hash of a file using specified algorithm (md5, sha256)."""
+    if algorithm == "md5":
+        h = hashlib.md5()
+    elif algorithm == "sha256":
+        h = hashlib.sha256()
+    else:
+        raise ValueError(f"Unsupported hash algorithm: {algorithm}")
+        
     with open(file_path, "rb") as f:
         for chunk in iter(lambda: f.read(8192), b""):
-            md5.update(chunk)
-    return md5.hexdigest()
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def get_zenodo_files(record_url: str) -> list[dict]:
@@ -232,14 +238,16 @@ def get_figshare_files(article_url: str) -> list[dict]:
 
 
 def get_mendeley_files(dataset_url: str) -> list[dict]:
-    """Get file download info from Mendeley Data."""
+    """Get file download info from Mendeley Data using public API."""
     # URL: https://data.mendeley.com/datasets/3hbcscwz44/1
     parts = dataset_url.rstrip("/").split("/")
     version = parts[-1]
     dataset_id = parts[-2]
     
-    # Mendeley uses a different API structure
-    api_url = f"https://data.mendeley.com/api/datasets/{dataset_id}/versions/{version}"
+    # Mendeley public API endpoint
+    # We need to explicitly request the 'files' field. 
+    # Note: specifying version with fields can sometimes return 0 files on Mendeley.
+    api_url = f"https://data.mendeley.com/public-api/datasets/{dataset_id}?fields=files"
     logger.info(f"Fetching Mendeley dataset metadata: {api_url}")
     
     headers = {
@@ -254,11 +262,30 @@ def get_mendeley_files(dataset_url: str) -> list[dict]:
     files = []
     
     for f in data.get("files", []):
+        # Handle both old and new Mendeley API structures
+        download_url = f.get("download_url")
+        size = f.get("size", 0)
+        checksum = f.get("checksum", "")
+        
+        if not download_url and "content_details" in f:
+            details = f["content_details"]
+            download_url = details.get("download_url")
+            if not size:
+                size = details.get("size", 0)
+            if not checksum:
+                # Use sha256 if available, prefixing it so validator knows
+                sha256 = details.get("sha256_hash")
+                if sha256:
+                    checksum = f"sha256:{sha256}"
+            
+        if not download_url:
+            continue
+            
         files.append({
             "filename": f["filename"],
-            "url": f["download_url"],
-            "size": f.get("size", 0),
-            "checksum": f.get("checksum", ""),
+            "url": download_url,
+            "size": size,
+            "checksum": checksum,
         })
     
     return files
@@ -449,17 +476,21 @@ def download_file_with_validation(
     
     # Validate checksum if provided
     if expected_checksum:
-        # Handle "md5:xxxxx" format from Zenodo
         if expected_checksum.startswith("md5:"):
-            expected_md5 = expected_checksum[4:]
+            expected_hash = expected_checksum[4:]
+            algorithm = "md5"
+        elif expected_checksum.startswith("sha256:"):
+            expected_hash = expected_checksum[7:]
+            algorithm = "sha256"
         else:
-            expected_md5 = expected_checksum
+            expected_hash = expected_checksum
+            algorithm = "md5"  # default
         
-        actual_md5 = compute_md5(dest_path)
-        if actual_md5 != expected_md5:
-            logger.error(f"Checksum mismatch: expected {expected_md5}, got {actual_md5}")
+        actual_hash = compute_hash(dest_path, algorithm)
+        if actual_hash != expected_hash:
+            logger.error(f"Checksum mismatch ({algorithm}): expected {expected_hash}, got {actual_hash}")
             return False
-        logger.success(f"Checksum verified: {actual_md5}")
+        logger.success(f"Checksum verified ({algorithm}): {actual_hash}")
     
     return True
 
