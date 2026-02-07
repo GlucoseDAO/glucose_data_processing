@@ -2,7 +2,7 @@
 expected_interval_minutes: 5
 small_gap_max_minutes: 15
 min_sequence_len: 200
-save_intermediate_files: true
+save_intermediate_files: false
 create_fixed_frequency: true
 glucose_only: false
 

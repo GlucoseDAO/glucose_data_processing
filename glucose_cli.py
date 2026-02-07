@@ -326,14 +326,7 @@ def main(
                 'create_fixed_frequency': preprocessor.create_fixed_frequency
             }
             stats_output = sm_print_statistics(statistics, params)
-            
-            # Save statistics to .txt file next to output file
-            try:
-                stats_file = final_output_file.with_suffix('.txt')
-                stats_file.write_text(stats_output, encoding='utf-8')
-                logger.info(f"Full statistics saved to: {stats_file}")
-            except Exception as e:
-                logger.warning(f"Could not save statistics to file: {e}")
+            logger.info(stats_output)
         
     except Exception as e:
         logger.error(f"Error during processing: {e}")

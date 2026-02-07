@@ -487,6 +487,9 @@ class GlucoseMLPreprocessor:
         output_file: Path,
         last_sequence_id: int,
         field_categories_dict: Optional[Dict[str, List[str]]],
+        append: bool = False,
+        dataset_name: Optional[str] = None,
+        quiet: bool = False,
     ) -> Tuple[pl.DataFrame, Dict[str, Any], int]:
         db_detector = DatabaseDetector()
         output_fields = self.config.get("output_fields")
@@ -498,14 +501,21 @@ class GlucoseMLPreprocessor:
         if not callable(iter_fn):
             raise ValueError(f"Converter for {database_type} does not support streaming frames")
 
-        output_file.write_text("", encoding="utf-8")
+        if not append:
+            output_file.write_text("", encoding="utf-8")
 
+        dataset_name_display = CSVFormatConverter.get_display_name(StandardFieldNames.DATASET_NAME)
         expected_cols = self._compute_expected_output_columns([database_type])
+        # If dataset_name is provided, ensure dataset_name_display is in expected_cols
+        if dataset_name and dataset_name_display not in expected_cols:
+            expected_cols.append(dataset_name_display)
+
         expected_standard_cols = self._compute_expected_output_columns([database_type], use_display_names=False)
         max_bytes = self._streaming_buffer_max_bytes()
         max_users = self._streaming_flush_max_users()
 
-        wrote_header = False
+        # If appending, we only write header if the file is empty
+        wrote_header = append and output_file.exists() and output_file.stat().st_size > 0
         current_last_sequence_id = last_sequence_id
         buffered: List[pl.DataFrame] = []
         buffered_bytes = 0
@@ -530,8 +540,9 @@ class GlucoseMLPreprocessor:
             # Use Manager().Lock() for ProcessPoolExecutor compatibility on all platforms
             manager = multiprocessing.Manager()
             lock = manager.Lock()
-            # Clear existing intermediate files to start fresh for accumulation
-            self._clear_intermediate_files(output_file)
+            # Clear existing intermediate files to start fresh for accumulation if not appending
+            if not append:
+                self._clear_intermediate_files(output_file)
 
         params = {
             'expected_interval_minutes': self.expected_interval_minutes,
@@ -549,7 +560,7 @@ class GlucoseMLPreprocessor:
             'lock': lock,
             'output_fields': output_fields,
             'config': self.config,
-            'verbose': self.verbose
+            'verbose': self.verbose and not quiet
         }
 
         def flush() -> None:
@@ -571,9 +582,13 @@ class GlucoseMLPreprocessor:
             
             total_users_processed += 1
             # Log progress every 5 users
-            if total_users_processed % 5 == 0:
+            if not quiet and total_users_processed % 5 == 0:
                 logger.info(f"   Processed {total_users_processed} users...")
             
+            # Add dataset name if provided
+            if dataset_name:
+                ml_df = ml_df.with_columns(pl.lit(dataset_name).alias(dataset_name_display))
+
             # Align columns to expected_cols
             missing = [c for c in expected_cols if c not in ml_df.columns]
             if missing:
@@ -583,9 +598,7 @@ class GlucoseMLPreprocessor:
             ml_df = ml_df.select(expected_cols)
             
             # Remap sequence IDs
-            # Use user_max_id for remapping logic even if ml_df is empty or sequences were filtered
             if seq_id_col in ml_df.columns:
-                # Always remap if we have sequence IDs, even if frame is empty (for consistency)
                 ml_df = ml_df.with_columns([
                     pl.when(pl.col(seq_id_col) > 0)
                     .then(pl.col(seq_id_col) + current_last_sequence_id)
@@ -629,17 +642,14 @@ class GlucoseMLPreprocessor:
             initializer=_init_worker_process,
             initargs=(params,)
         ) as executor:
-            # We use a sliding window of futures to avoid memory issues with thousands of users
             max_active_tasks = max_workers * 2
             futures = []
             
-            # Cast iter_fn to the expected callable type for the linter
             typed_iter_fn = cast(Iterable[pl.DataFrame], iter_fn(data_folder, interval_minutes=self.expected_interval_minutes))
             for user_df in typed_iter_fn:
                 if len(user_df) == 0:
                     continue
                 
-                # Submit new task
                 futures.append(executor.submit(
                     _process_user_frame_task, 
                     user_df, 
@@ -649,11 +659,9 @@ class GlucoseMLPreprocessor:
                     expected_standard_cols
                 ))
                 
-                # If we reached the window size, wait for tasks in order to maintain sequence ID stability
                 if len(futures) >= max_active_tasks:
                     handle_result(futures.pop(0).result())
             
-            # Finalize remaining tasks
             while futures:
                 handle_result(futures.pop(0).result())
 
@@ -661,10 +669,10 @@ class GlucoseMLPreprocessor:
 
         # Use StatsManager to aggregate all collected user statistics
         if all_user_stats:
-            stats = self.stats_manager.aggregate_statistics(all_user_stats, ["Streaming Chunk"] * len(all_user_stats))
+            stats = self.stats_manager.aggregate_statistics(all_user_stats, [dataset_name or "User"] * len(all_user_stats))
             
-            # If we only have one dataset, don't include multi-database info
-            if "multi_database_info" in stats:
+            # If we only have one dataset and no dataset_name was provided, don't include multi-database info
+            if not dataset_name and "multi_database_info" in stats:
                 del stats["multi_database_info"]
                 
             # Update with overall counts and dates
@@ -680,6 +688,7 @@ class GlucoseMLPreprocessor:
 
         placeholder = pl.DataFrame({seq_id_col: pl.Series([], dtype=pl.Int64)})
         return placeholder, stats, current_last_sequence_id
+
 
     def consolidate_glucose_data(self, data_folder: Path, output_file: Optional[Path] = None) -> pl.DataFrame:
         db_detector = DatabaseDetector()
@@ -729,8 +738,9 @@ class GlucoseMLPreprocessor:
             field_categories_dict = self._field_categories_dict
         return self.ml_preparer.prepare_ml_data(df, field_categories_dict)
 
-    def process(self, csv_folder: Path, output_file: Optional[Path] = None, last_sequence_id: int = 0, database_type: Optional[str] = None) -> Tuple[pl.DataFrame, Dict[str, Any], int]:
-        logger.info("Starting glucose data preprocessing for ML...")
+    def process(self, csv_folder: Path, output_file: Optional[Path] = None, last_sequence_id: int = 0, database_type: Optional[str] = None, append: bool = False, dataset_name: Optional[str] = None, quiet: bool = False) -> Tuple[pl.DataFrame, Dict[str, Any], int]:
+        if not quiet:
+            logger.info(f"Starting glucose data preprocessing for {csv_folder.name}...")
         
         if database_type is None:
             db_detector = DatabaseDetector()
@@ -739,8 +749,8 @@ class GlucoseMLPreprocessor:
         field_categories_dict = extract_field_categories(database_type) if database_type != 'unknown' else None
         self._field_categories_dict = field_categories_dict
         
-        # Clear existing intermediate files if enabled
-        if self.save_intermediate_files and output_file:
+        # Clear existing intermediate files if enabled and not appending
+        if self.save_intermediate_files and output_file and not append:
             self._clear_intermediate_files(output_file)
 
         db_detector = DatabaseDetector()
@@ -756,9 +766,13 @@ class GlucoseMLPreprocessor:
                 output_file=output_file,
                 last_sequence_id=last_sequence_id,
                 field_categories_dict=field_categories_dict,
+                append=append,
+                dataset_name=dataset_name,
+                quiet=quiet
             )
         
-        logger.info("STEP 1: Consolidating CSV files (mandatory step)...")
+        if not quiet:
+            logger.info("STEP 1: Consolidating CSV files (mandatory step)...")
         df = self.consolidate_glucose_data(csv_folder)
         
         # Use common processing pipeline for steps 2-8 (handles last_step internally)
@@ -768,7 +782,7 @@ class GlucoseMLPreprocessor:
             df, last_sequence_id, field_categories_dict,
             self.gap_detector, self.data_cleaner, self.interpolator, self.filter_step, self.fixed_freq_generator, self.ml_preparer, self.stats_manager,
             self.create_fixed_frequency,
-            log_steps=True,
+            log_steps=not quiet,
             last_step=self.last_step,
             save_intermediate=self.save_intermediate_files,
             output_dir=output_file.parent if output_file else Path("OUTPUT"),
@@ -776,196 +790,110 @@ class GlucoseMLPreprocessor:
             expected_standard_cols=expected_standard_cols
         )
         
+        # Add dataset name if provided
+        if dataset_name:
+            dataset_name_display = CSVFormatConverter.get_display_name(StandardFieldNames.DATASET_NAME)
+            ml_df = ml_df.with_columns(pl.lit(dataset_name).alias(dataset_name_display))
+
         if output_file:
-            ml_df.write_csv(output_file)
-            logger.info(f"Final processed data saved to: {output_file}")
+            # When appending, we only write header if the file is empty or doesn't exist
+            include_header = not (append and output_file.exists() and output_file.stat().st_size > 0)
+            mode = "a" if append else "w"
+            
+            # Polars write_csv doesn't support mode="a" directly for path, need to open file
+            if append:
+                with open(output_file, "ab") as f:
+                    ml_df.write_csv(f, include_header=include_header)
+            else:
+                ml_df.write_csv(output_file)
+            
+            if not quiet:
+                logger.info(f"Final processed data saved to: {output_file}")
+            
+            # Save statistics to file if not appending (if appending, higher level will handle it)
+            if not append:
+                from processing.stats_manager import print_statistics
+                stats_str = print_statistics(stats, preprocessor_params={
+                    'expected_interval_minutes': self.expected_interval_minutes,
+                    'small_gap_max_minutes': self.small_gap_max_minutes,
+                    'min_sequence_len': self.min_sequence_len,
+                    'glucose_only': self.glucose_only,
+                    'create_fixed_frequency': self.create_fixed_frequency
+                })
+                self._save_stats_to_file(stats_str, output_file)
+        
+        # Add database info to stats for better aggregation later
+        stats['database_info'] = {
+            'database_name': dataset_name or csv_folder.name,
+            'sequence_id_range': {
+                'min': ml_df[StandardFieldNames.SEQUENCE_ID].min() if len(ml_df) > 0 else None,
+                'max': ml_df[StandardFieldNames.SEQUENCE_ID].max() if len(ml_df) > 0 else None
+            }
+        }
         
         return ml_df, stats, last_sequence_id
+
+    def _save_stats_to_file(self, stats_str: str, output_file: Path) -> None:
+        """Save statistics string to a .txt file near the output CSV."""
+        stats_file = output_file.with_suffix('.txt')
+        try:
+            stats_file.write_text(stats_str, encoding="utf-8")
+            logger.info(f"Full statistics saved to: {stats_file}")
+        except Exception as e:
+            logger.error(f"Failed to save statistics to {stats_file}: {e}")
 
     def process_multiple_databases(self, csv_folders: List[Path], output_file: Optional[Path] = None, last_sequence_id: int = 0) -> Tuple[pl.DataFrame, Dict[str, Any], int]:
         logger.info(f"Starting multi-database processing for {len(csv_folders)} databases...")
         
-        db_detector = DatabaseDetector()
-        db_types: List[str] = []
-        for p in csv_folders:
-            try:
-                db_types.append(db_detector.detect_database_type(p))
-            except (ValueError, OSError):
-                db_types.append("unknown")
-        
-        converters = [db_detector.get_database_converter(t, self.config or {}) for t in db_types]
-        streaming_capable = any(c is not None and callable(getattr(c, "iter_user_event_frames", None)) for c in converters)
-        
-        ts_col = StandardFieldNames.TIMESTAMP
-        seq_id_col = StandardFieldNames.SEQUENCE_ID
-        user_id_col = StandardFieldNames.USER_ID
-        dataset_name_col = StandardFieldNames.DATASET_NAME
-        dataset_name_display = CSVFormatConverter.get_display_name(dataset_name_col)
-
-        if streaming_capable and output_file:
-            expected_cols = self._compute_expected_output_columns(db_types)
-            expected_standard_cols = self._compute_expected_output_columns(db_types, use_display_names=False)
-            max_bytes = self._streaming_buffer_max_bytes()
-            max_users = self._streaming_flush_max_users()
-            output_file.write_text("", encoding="utf-8")
-
-            current_last_sequence_id = last_sequence_id
-            wrote_header = False
-            buffered: List[pl.DataFrame] = []
-            buffered_bytes = 0
-            buffered_users = 0
-            total_records = 0
-            total_sequences = 0
-            original_records = 0
-            min_ts: Optional[str] = None
-            max_ts: Optional[str] = None
-            
-            # Stats accumulation
-            all_processing_stats: List[Dict[str, Any]] = []
-
-            # Prepare for intermediate file saving if enabled
-            lock = None
-            if self.save_intermediate_files:
-                # Use Manager().Lock() for potential ProcessPoolExecutor compatibility
-                manager = multiprocessing.Manager()
-                lock = manager.Lock()
-                self._clear_intermediate_files(output_file)
-
-            def flush() -> None:
-                nonlocal wrote_header, buffered, buffered_bytes, buffered_users, total_records, total_sequences
-                if not buffered:
-                    return
-                frames = buffered
-                buffered = []
-                buffered_bytes = 0
-                buffered_users = 0
-                for frame in frames:
-                    missing = [c for c in expected_cols if c not in frame.columns]
-                    if missing:
-                        frame = frame.with_columns([pl.lit(None).alias(c) for c in missing])
-                    frame = frame.select([c for c in expected_cols if c in frame.columns])
-                    total_records += len(frame)
-                    self._write_csv_append(frame, output_file=output_file, include_header=not wrote_header)
-                    wrote_header = True
-
-            for idx, (csv_folder, db_type, converter) in enumerate(zip(csv_folders, db_types, converters), 1):
-                if converter is not None and callable(getattr(converter, "iter_user_event_frames", None)):
-                    field_categories_dict = extract_field_categories(db_type) if db_type != "unknown" else None
-                    # Use getattr to avoid linter error on base class attribute access
-                    iter_fn = getattr(converter, "iter_user_event_frames")
-                    for user_df in iter_fn(csv_folder, interval_minutes=self.expected_interval_minutes):
-                        if len(user_df) == 0:
-                            continue
-                        
-                        self.stats_manager.original_record_count = len(user_df)
-                        original_records += len(user_df)
-                        
-                        try:
-                            umin = user_df[ts_col].min()
-                            umax = user_df[ts_col].max()
-                            if umin is not None:
-                                s = umin.strftime("%Y-%m-%dT%H:%M:%S")
-                                min_ts = s if (min_ts is None or s < min_ts) else min_ts
-                            if umax is not None:
-                                s = umax.strftime("%Y-%m-%dT%H:%M:%S")
-                                max_ts = s if (max_ts is None or s > max_ts) else max_ts
-                        except (KeyError, AttributeError, ValueError):
-                            pass
-
-                        ml_df, user_stats, current_last_sequence_id = _run_processing_pipeline(
-                            user_df, current_last_sequence_id, field_categories_dict,
-                            self.gap_detector, self.data_cleaner, self.interpolator, self.filter_step, self.fixed_freq_generator, self.ml_preparer, self.stats_manager,
-                            self.create_fixed_frequency,
-                            last_step=self.last_step,
-                            save_intermediate=self.save_intermediate_files,
-                            output_dir=output_file.parent if output_file else Path("OUTPUT"),
-                            output_prefix=output_file.stem if output_file else "combined",
-                            expected_standard_cols=expected_standard_cols
-                        )
-                        
-                        # Add dataset name in multi-database mode
-                        ml_df = ml_df.with_columns(pl.lit(csv_folder.name).alias(dataset_name_display))
-
-                        # Accumulate total sequences and stats
-                        all_processing_stats.append(user_stats)
-                        total_sequences += user_stats['dataset_overview']['total_sequences']
-
-                        missing = [c for c in expected_cols if c not in ml_df.columns]
-                        if missing:
-                            ml_df = ml_df.with_columns([pl.lit(None).alias(c) for c in missing])
-                        ml_df = ml_df.select([c for c in expected_cols if c in ml_df.columns])
-                        buffered.append(ml_df)
-                        buffered_bytes += self._df_estimated_size_bytes(ml_df)
-                        buffered_users += 1
-                        if buffered_bytes >= max_bytes or buffered_users >= max_users:
-                            flush()
-                else:
-                    ml_df, stats, current_last_sequence_id = self.process(csv_folder, output_file=None, last_sequence_id=current_last_sequence_id)
-                    
-                    # Add dataset name in multi-database mode
-                    ml_df = ml_df.with_columns(pl.lit(csv_folder.name).alias(dataset_name_display))
-
-                    all_processing_stats.append(stats)
-                    total_sequences += stats['dataset_overview']['total_sequences']
-                    original_records += stats['dataset_overview'].get('original_records', 0)
-                    
-                    missing = [c for c in expected_cols if c not in ml_df.columns]
-                    if missing:
-                        ml_df = ml_df.with_columns([pl.lit(None).alias(c) for c in missing])
-                    ml_df = ml_df.select([c for c in expected_cols if c in ml_df.columns])
-                    buffered.append(ml_df)
-                    buffered_bytes += self._df_estimated_size_bytes(ml_df)
-                    buffered_users += 1
-                    if buffered_bytes >= max_bytes or buffered_users >= max_users:
-                        flush()
-            flush()
-            
-            if all_processing_stats:
-                aggregated_stats = self.stats_manager.aggregate_statistics(
-                    all_processing_stats, ["Streaming Folder"] * len(all_processing_stats)
-                )
-                aggregated_stats['dataset_overview']['total_records'] = total_records
-                aggregated_stats['dataset_overview']['original_records'] = original_records
-                aggregated_stats['dataset_overview']['date_range'] = {"start": min_ts or "N/A", "end": max_ts or "N/A"}
-            else:
-                aggregated_stats = self.stats_manager.get_statistics(
-                    pl.DataFrame({seq_id_col: pl.Series([], dtype=pl.Int64)}),
-                    {}, {}, {}, {}, {}
-                )
-            
-            placeholder = pl.DataFrame({seq_id_col: pl.Series([], dtype=pl.Int64)})
-            return placeholder, aggregated_stats, current_last_sequence_id
-
-        all_dataframes: List[pl.DataFrame] = []
         all_statistics: List[Dict[str, Any]] = []
         current_last_sequence_id = last_sequence_id
         
+        # Ensure output file is empty at the start
+        if output_file:
+            output_file.write_text("", encoding="utf-8")
+            if self.save_intermediate_files:
+                self._clear_intermediate_files(output_file)
+        
         for idx, csv_folder in enumerate(csv_folders, 1):
-            ml_df, stats, current_last_sequence_id = self.process(csv_folder, output_file=None, last_sequence_id=current_last_sequence_id)
-            if user_id_col in ml_df.columns:
-                ml_df = ml_df.drop(user_id_col)
+            # Process each dataset, appending to the same output file
+            _, stats, current_last_sequence_id = self.process(
+                csv_folder, 
+                output_file=output_file, 
+                last_sequence_id=current_last_sequence_id,
+                append=True,
+                dataset_name=csv_folder.name,
+                quiet=True
+            )
             
-            # Add dataset name in multi-database mode
-            ml_df = ml_df.with_columns(pl.lit(csv_folder.name).alias(dataset_name_display))
-
-            max_seq_id = ml_df[seq_id_col].max() if len(ml_df) > 0 else current_last_sequence_id
-            min_seq_id = ml_df[seq_id_col].min() if len(ml_df) > 0 else current_last_sequence_id
-            stats['database_info'] = {
-                'database_index': idx,
-                'database_path': str(csv_folder),
-                'sequence_id_range': {
-                    'min': int(cast(Any, min_seq_id)) if min_seq_id is not None else current_last_sequence_id, 
-                    'max': int(cast(Any, max_seq_id)) if max_seq_id is not None else current_last_sequence_id
-                }
-            }
-            all_dataframes.append(ml_df)
+            # Brief info on each processed dataset
+            records = stats['dataset_overview'].get('total_records', 0)
+            sequences = stats['dataset_overview'].get('total_sequences', 0)
+            logger.info(f"   Done {idx}/{len(csv_folders)}: {csv_folder.name} ({records:,} records, {sequences:,} sequences)")
+            
+            # Add database index to stats for aggregate reporting
+            if 'database_info' not in stats:
+                stats['database_info'] = {}
+            stats['database_info']['database_index'] = idx
+            
             all_statistics.append(stats)
         
-        combined_df = pl.concat(all_dataframes).sort([seq_id_col, ts_col])
+        # Aggregate all statistics
         combined_stats = self.stats_manager.aggregate_statistics(all_statistics, csv_folders)
         
-        if output_file:
-            combined_df.write_csv(output_file)
+        # Prepare and print/save overall statistics
+        from processing.stats_manager import print_statistics
+        stats_str = print_statistics(combined_stats, preprocessor_params={
+            'expected_interval_minutes': self.expected_interval_minutes,
+            'small_gap_max_minutes': self.small_gap_max_minutes,
+            'min_sequence_len': self.min_sequence_len,
+            'glucose_only': self.glucose_only,
+            'create_fixed_frequency': self.create_fixed_frequency
+        })
         
-        return combined_df, combined_stats, current_last_sequence_id
+        if output_file:
+            self._save_stats_to_file(stats_str, output_file)
+        
+        # Return empty placeholder DF since we already wrote to file in streaming fashion if requested
+        placeholder = pl.DataFrame({StandardFieldNames.SEQUENCE_ID: pl.Series([], dtype=pl.Int64)})
+        return placeholder, combined_stats, current_last_sequence_id
 

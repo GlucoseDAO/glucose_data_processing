@@ -216,7 +216,16 @@ class StatsManager:
         
         for idx, stats in enumerate(all_statistics):
             db_info = stats.get('database_info', {})
-            db_info['database_name'] = str(csv_folders[idx])
+            # Ensure name and index are set
+            db_info.setdefault('database_name', str(csv_folders[idx]) if idx < len(csv_folders) else f"Dataset {idx+1}")
+            db_info.setdefault('database_index', idx + 1)
+            
+            # Extract sequence range if not present but available in stats
+            if 'sequence_id_range' not in db_info:
+                overview = stats.get('dataset_overview', {})
+                # This might be tricky without the actual DF, but we can try to guess from sequence_analysis
+                db_info['sequence_id_range'] = {'min': 'N/A', 'max': 'N/A'}
+
             aggregated['multi_database_info']['databases_processed'].append(db_info)
             
             overview = stats.get('dataset_overview', {})
@@ -244,11 +253,14 @@ class StatsManager:
                     )
             
             seq_analysis = stats.get('sequence_analysis', {})
-            if 'all_lengths' in seq_analysis:
+            if 'all_lengths' in seq_analysis and seq_analysis['all_lengths']:
                 all_sequence_lengths.extend(seq_analysis['all_lengths'])
+            elif 'sequence_lengths' in seq_analysis and 'all_lengths' in seq_analysis['sequence_lengths']:
+                all_sequence_lengths.extend(seq_analysis['sequence_lengths']['all_lengths'])
             elif 'sequence_lengths' in stats.get('gap_analysis', {}):
                 sequence_lengths_dict = stats['gap_analysis']['sequence_lengths']
-                all_sequence_lengths.extend(list(sequence_lengths_dict.values()))
+                if isinstance(sequence_lengths_dict, dict):
+                    all_sequence_lengths.extend(list(sequence_lengths_dict.values()))
             
             aggregated['sequence_analysis']['longest_sequence'] = max(
                 aggregated['sequence_analysis']['longest_sequence'],
@@ -297,7 +309,6 @@ class StatsManager:
             
             fixed_freq_analysis = stats.get('fixed_frequency_analysis', {})
             if fixed_freq_analysis:
-                # Aggregate all numeric values in fixed_frequency_analysis
                 for key, val in fixed_freq_analysis.items():
                     if isinstance(val, (int, float)) and key not in ['data_density_before', 'data_density_after']:
                         if key not in aggregated['fixed_frequency_analysis']:
@@ -308,9 +319,9 @@ class StatsManager:
                     before_density = fixed_freq_analysis['data_density_before']
                     after_density = fixed_freq_analysis['data_density_after']
                     
-                    if 'data_density_before' not in aggregated['fixed_frequency_analysis']:
+                    if 'data_density_before' not in aggregated['fixed_frequency_analysis'] or isinstance(aggregated['fixed_frequency_analysis']['data_density_before'], (int, float)):
                         aggregated['fixed_frequency_analysis']['data_density_before'] = {'total_points': 0, 'total_intervals': 0}
-                    if 'data_density_after' not in aggregated['fixed_frequency_analysis']:
+                    if 'data_density_after' not in aggregated['fixed_frequency_analysis'] or isinstance(aggregated['fixed_frequency_analysis']['data_density_after'], (int, float)):
                         aggregated['fixed_frequency_analysis']['data_density_after'] = {'total_points': 0, 'total_intervals': 0}
                     
                     agg_before = aggregated['fixed_frequency_analysis']['data_density_before']
@@ -350,7 +361,7 @@ class StatsManager:
                     pct_key = f"{key}_pct"
                     interp_agg[pct_key] = round((val / total_agg_recs) * 100, 2)
         
-        if 'fixed_frequency_analysis' in aggregated and 'data_density_before' in aggregated['fixed_frequency_analysis']:
+        if 'fixed_frequency_analysis' in aggregated and isinstance(aggregated['fixed_frequency_analysis'].get('data_density_before'), dict):
             before_density = aggregated['fixed_frequency_analysis']['data_density_before']
             after_density = aggregated['fixed_frequency_analysis']['data_density_after']
             
@@ -362,14 +373,19 @@ class StatsManager:
         if all_sequence_lengths:
             s_series = pl.Series("lens", all_sequence_lengths)
             aggregated['sequence_analysis']['sequence_lengths']['count'] = len(all_sequence_lengths)
-            aggregated['sequence_analysis']['sequence_lengths']['mean'] = s_series.mean()
-            aggregated['sequence_analysis']['sequence_lengths']['std'] = s_series.std()
-            aggregated['sequence_analysis']['sequence_lengths']['min'] = s_series.min()
-            aggregated['sequence_analysis']['sequence_lengths']['25%'] = s_series.quantile(0.25)
-            aggregated['sequence_analysis']['sequence_lengths']['50%'] = s_series.median()
-            aggregated['sequence_analysis']['sequence_lengths']['75%'] = s_series.quantile(0.75)
-            aggregated['sequence_analysis']['sequence_lengths']['max'] = s_series.max()
+            aggregated['sequence_analysis']['sequence_lengths']['mean'] = float(s_series.mean())
+            aggregated['sequence_analysis']['sequence_lengths']['std'] = float(s_series.std()) if len(all_sequence_lengths) > 1 else 0.0
+            aggregated['sequence_analysis']['sequence_lengths']['min'] = int(s_series.min())
+            aggregated['sequence_analysis']['sequence_lengths']['25%'] = float(s_series.quantile(0.25))
+            aggregated['sequence_analysis']['sequence_lengths']['50%'] = float(s_series.median())
+            aggregated['sequence_analysis']['sequence_lengths']['75%'] = float(s_series.quantile(0.75))
+            aggregated['sequence_analysis']['sequence_lengths']['max'] = int(s_series.max())
+            # CRITICAL: preserve all_lengths for further aggregation
+            aggregated['sequence_analysis']['all_lengths'] = all_sequence_lengths
         
+        if aggregated['sequence_analysis']['shortest_sequence'] == float('inf'):
+            aggregated['sequence_analysis']['shortest_sequence'] = 0
+            
         return aggregated
 
 def print_statistics(stats: Dict[str, Any], preprocessor_params: Optional[Dict[str, Any]] = None) -> str:
@@ -383,21 +399,24 @@ def print_statistics(stats: Dict[str, Any], preprocessor_params: Optional[Dict[s
     
     if 'multi_database_info' in stats and stats['multi_database_info'].get('total_databases', 0) > 1:
         multi_db_info = stats['multi_database_info']
-        lines.append(f"\nMULTI-DATABASE PROCESSING:")
+        lines.append(f"\nMULTI-DATABASE PROCESSING SUMMARY:")
         lines.append(f"   Total Databases Combined: {multi_db_info['total_databases']}")
-        lines.append(f"   Database Paths:")
-        for i, path in enumerate(multi_db_info['database_paths'], 1):
-            lines.append(f"      {i}. {path}")
         
         lines.append(f"\n   Processed Databases Details:")
         for db in multi_db_info['databases_processed']:
             db_idx = db.get('database_index', 'N/A')
             db_name = db.get('database_name', 'Unknown')
             seq_range = db.get('sequence_id_range', {})
-            # Only show if there's actual sequence information or name is not just "Streaming Chunk"
-            if seq_range.get('min') is not None or db_name != "Streaming Chunk":
-                lines.append(f"      Database {db_idx} ({db_name}):")
-                lines.append(f"         Sequence ID Range: {seq_range.get('min', 'N/A')} - {seq_range.get('max', 'N/A')}")
+            
+            # Use folder name for display
+            display_name = Path(db_name).name if '/' in db_name or '\\' in db_name else db_name
+            
+            # Show sequence ID range if available and valid
+            seq_info = ""
+            if seq_range.get('min') is not None and seq_range.get('min') != 'N/A':
+                seq_info = f" (Sequence IDs: {seq_range['min']} - {seq_range['max']})"
+            
+            lines.append(f"      {db_idx}. {display_name}{seq_info}")
     
     if preprocessor_params:
         lines.append(f"\nPARAMETERS USED:")
@@ -417,7 +436,7 @@ def print_statistics(stats: Dict[str, Any], preprocessor_params: Optional[Dict[s
     preservation_percentage = (final_records / original_records * 100) if original_records > 0 else 100
     lines.append(f"   Data Preservation: {preservation_percentage:.1f}% ({final_records:,}/{original_records:,} records)")
     
-    seq_analysis = stats['sequence_analysis']
+    seq_analysis = stats.get('sequence_analysis', {})
     lines.append(f"\nSEQUENCE ANALYSIS:")
     lines.append(f"   Longest Sequence: {seq_analysis.get('longest_sequence', 0):,} records")
     lines.append(f"   Shortest Sequence: {seq_analysis.get('shortest_sequence', 0):,} records")
@@ -439,7 +458,7 @@ def print_statistics(stats: Dict[str, Any], preprocessor_params: Optional[Dict[s
         lines.append(f"   Records Removed After Calibration: {calib_analysis.get('total_records_marked_for_removal', 0):,}")
     
     cleaning_analysis = stats.get('cleaning_analysis', {})
-    if cleaning_analysis:
+    if cleaning_analysis and cleaning_analysis.get('removed_records', 0) > 0:
         lines.append(f"\nDATA CLEANING ANALYSIS:")
         lines.append(f"   Records Removed In Large Gaps: {cleaning_analysis.get('removed_records', 0):,}")
     
@@ -455,7 +474,8 @@ def print_statistics(stats: Dict[str, Any], preprocessor_params: Optional[Dict[s
                 field_name = key.replace('_interpolations', '').replace('_', ' ').title()
                 pct_key = f"{key}_pct"
                 pct = interp_analysis.get(pct_key, 0.0)
-                lines.append(f"   {field_name} Interpolations: {val:,} ({pct}%)")
+                if val > 0:
+                    lines.append(f"   {field_name} Interpolations: {val:,} ({pct}%)")
         
         lines.append(f"   Total Field Interpolations: {interp_analysis.get('total_interpolations', 0):,}")
     
@@ -478,35 +498,36 @@ def print_statistics(stats: Dict[str, Any], preprocessor_params: Optional[Dict[s
             'data_density_before', 'data_density_after', 'density_change_explanation'
         }
         for key, val in fixed_freq_analysis.items():
-            if key not in skip_keys and isinstance(val, (int, float)):
+            if key not in skip_keys and isinstance(val, (int, float)) and val > 0:
                 name = key.replace('_', ' ').title()
                 lines.append(f"   {name}: {val:,}")
         
         if 'data_density_before' in fixed_freq_analysis and 'data_density_after' in fixed_freq_analysis:
             before_density = fixed_freq_analysis['data_density_before']
             after_density = fixed_freq_analysis['data_density_after']
-            lines.append(f"\n   DATA DENSITY:")
-            lines.append(f"      Before: {before_density.get('avg_points_per_interval', 0.0):.2f} points/interval")
-            lines.append(f"      After: {after_density.get('avg_points_per_interval', 0.0):.2f} points/interval")
+            if isinstance(before_density, dict) and isinstance(after_density, dict):
+                lines.append(f"\n   DATA DENSITY:")
+                lines.append(f"      Before: {before_density.get('avg_points_per_interval', 0.0):.2f} points/interval")
+                lines.append(f"      After: {after_density.get('avg_points_per_interval', 0.0):.2f} points/interval")
     
     quality = stats.get('data_quality', {})
     lines.append(f"\nDATA QUALITY:")
     
-    # Print all data completeness stats
-    for key, val in quality.items():
-        if key.endswith('_data_completeness'):
+    # Sort quality metrics for consistent output
+    sorted_quality = sorted(quality.items())
+    for key, val in sorted_quality:
+        if key.endswith('_data_completeness') and val > 0:
             field_name = key.replace('_data_completeness', '').replace('_', ' ').title()
             lines.append(f"   {field_name} Data Completeness: {val:.1f}%")
             
     # Print special record counts
-    if 'interpolated_records' in quality:
+    if quality.get('interpolated_records', 0) > 0:
         lines.append(f"   Interpolated Records (Existing rows): {quality['interpolated_records']:,}")
-    if 'inserted_records' in quality:
+    if quality.get('inserted_records', 0) > 0:
         lines.append(f"   Inserted Records (New rows): {quality['inserted_records']:,}")
     
     lines.append("\n" + "="*60)
     
     output = "\n".join(lines)
-    logger.info(output)
     return output
 
