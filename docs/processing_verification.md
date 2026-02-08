@@ -7,7 +7,7 @@ This document describes the steps to verify the complete data processing pipelin
 Clone the repository and enter the project directory:
 
 ```bash
-git clone https://github.com/your-repo/glucose_data_processing.git
+git clone https://github.com/GlucoseDAO/glucose_data_processing.git
 cd glucose_data_processing
 ```
 
@@ -46,8 +46,12 @@ uv run glucose_cli.py DATA/hupa DATA/uom test_data/dexcom_small --config hupa_uo
     *   Removes sensor calibration periods and subsequent "noisy" data.
     *   Filters out short sequences (default minimum 200 points).
 4.  **Sequence Management**: Automatically tracks and offsets sequence IDs across the different databases to ensure each sequence remains unique in the final file.
-5.  **Output**: Generates a unified CSV file in the `OUTPUT/` folder containing the processed ML-ready data.
+5.  **Output**: Generates a unified CSV file in the `OUTPUT/` folder (e.g., `hupa_uom_dexcom_small_ml_ready.csv`) containing the processed ML-ready data.
 
 ## 5. Verification
 
-After the process completes, you can check the `OUTPUT/` folder for the resulting CSV and a corresponding `.txt` file containing detailed processing statistics for each dataset and the combined total.
+After the process completes, check the `OUTPUT/` folder for the results:
+1.  **ML-ready CSV**: `hupa_uom_dexcom_small_ml_ready.csv` containing the combined data.
+2.  **Statistics Report**: `hupa_uom_dexcom_small_ml_ready.txt` containing detailed processing statistics for each dataset and the combined total.
+
+You can verify the success by checking the "DATA QUALITY" section at the end of the statistics report, which should show high completeness for the mapped fields.
