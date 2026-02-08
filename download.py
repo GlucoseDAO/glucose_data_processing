@@ -8,12 +8,35 @@ import shutil
 import subprocess
 import tempfile
 import zipfile
+from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 import requests
 import typer
 from loguru import logger
+
+
+class FileFilter(ABC):
+    @abstractmethod
+    def should_download(self, filename: str) -> bool:
+        pass
+
+
+class HupaFileFilter(FileFilter):
+    def __init__(self) -> None:
+        import re
+        self.pattern = re.compile(r"HUPA(\d+)([a-zA-Z])\.csv", re.IGNORECASE)
+
+    def should_download(self, filename: str) -> bool:
+        return bool(self.pattern.fullmatch(filename))
+
+
+def get_filter_for_dataset(dataset_name: str) -> Optional[FileFilter]:
+    if dataset_name == "HUPA":
+        return HupaFileFilter()
+    return None
+
 
 # Constants
 DATASETS_CSV = Path(__file__).parent / "docs" / "datasets.csv"
@@ -550,6 +573,11 @@ def download_dataset(dataset: dict, data_dir: Path, force: bool = False) -> bool
     folder_name = get_folder_name(name)
     dataset_dir = data_dir / folder_name
     
+    # Get file filter for this dataset if available
+    file_filter = get_filter_for_dataset(name)
+    if file_filter:
+        logger.info(f"Applying file filter for {name}")
+
     if dataset_dir.exists() and not force:
         logger.warning(f"Dataset folder already exists: {dataset_dir}")
         logger.info("Use --force to redownload")
@@ -579,7 +607,11 @@ def download_dataset(dataset: dict, data_dir: Path, force: bool = False) -> bool
             return False
         
         for file_info in files:
-            dest = dataset_dir / file_info["filename"]
+            filename = file_info["filename"]
+            if file_filter and not file_filter.should_download(filename):
+                continue
+
+            dest = dataset_dir / filename
             if not download_file_with_validation(
                 file_info["url"],
                 dest,
@@ -604,7 +636,11 @@ def download_dataset(dataset: dict, data_dir: Path, force: bool = False) -> bool
             return False
         
         for file_info in files:
-            dest = dataset_dir / file_info["filename"]
+            filename = file_info["filename"]
+            if file_filter and not file_filter.should_download(filename):
+                continue
+
+            dest = dataset_dir / filename
             if not download_file_with_validation(
                 file_info["url"],
                 dest,
@@ -715,6 +751,58 @@ def download_all(
     typer.echo(f"  Failed:  {fail_count}")
     typer.echo(f"  Skipped: {skip_count}")
     typer.echo("=" * 60)
+
+
+@app.command("by-names")
+def download_by_names(
+    names: list[str] = typer.Argument(..., help="One or more dataset names (or partial matches)"),
+    force: bool = typer.Option(False, "--force", "-f", help="Force redownload even if exists"),
+) -> None:
+    """Download multiple datasets by name."""
+    datasets = get_downloadable_datasets()
+    
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    
+    success_count = 0
+    fail_count = 0
+    
+    for name in names:
+        typer.echo(f"\nProcessing: {name}")
+        name_lower = name.lower()
+        matches = [ds for ds in datasets if name_lower in ds["name"].lower()]
+        
+        if not matches:
+            typer.echo(f"  No dataset found matching: {name}")
+            fail_count += 1
+            continue
+        
+        if len(matches) > 1:
+            typer.echo(f"  Multiple datasets match '{name}':")
+            for m in matches:
+                typer.echo(f"    - {m['name']}")
+            typer.echo("  Please provide a more specific name for this match.")
+            fail_count += 1
+            continue
+        
+        dataset = matches[0]
+        typer.echo(f"  Found dataset: {dataset['name']}")
+        typer.echo(f"  Source: {dataset['source']}")
+        
+        if download_dataset(dataset, DATA_DIR, force):
+            typer.echo("  Download complete!")
+            success_count += 1
+        else:
+            typer.echo("  Download failed!")
+            fail_count += 1
+
+    typer.echo(f"\n{'='*60}")
+    typer.echo("Summary:")
+    typer.echo(f"  Success: {success_count}")
+    typer.echo(f"  Failed:  {fail_count}")
+    typer.echo("=" * 60)
+    
+    if fail_count > 0:
+        raise typer.Exit(1)
 
 
 @app.command("by-name")
