@@ -8,7 +8,7 @@ import pytest
 
 from download import (
     DATASET_TO_FORMAT_FOLDER,
-    compute_md5,
+    compute_hash,
     download_file_with_validation,
     get_downloadable_datasets,
     get_figshare_collection_files,
@@ -187,17 +187,17 @@ class TestDownloadWithValidation:
             assert dest.stat().st_size == small_file["size"]
 
 
-class TestComputeMD5:
-    """Tests for MD5 checksum computation."""
+class TestComputeHash:
+    """Tests for hash checksum computation."""
 
-    def test_compute_md5_known_content(self) -> None:
+    def test_compute_hash_known_content(self) -> None:
         """Verify MD5 computation with known content."""
         with tempfile.NamedTemporaryFile(delete=False) as f:
             f.write(b"Hello, World!")
             tmp_path = Path(f.name)
 
         try:
-            md5 = compute_md5(tmp_path)
+            md5 = compute_hash(tmp_path)
             # Known MD5 hash for "Hello, World!"
             assert md5 == "65a8e27d8879283831b664bd8b7f0ad4"
         finally:

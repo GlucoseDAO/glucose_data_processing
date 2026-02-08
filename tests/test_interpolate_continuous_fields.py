@@ -105,9 +105,9 @@ def test_multiple_continuous_fields_same_points():
     interpolated_occ = interpolated_row['occasional_field'][0]
     assert interpolated_occ is None, f"Expected Occasional Field to be None, got {interpolated_occ}"
     
-    # Service field should be empty string (not interpolated)
+    # Service field should be None (not interpolated)
     interpolated_service = interpolated_row['service_field'][0]
-    assert interpolated_service == '', f"Expected Service Field to be empty, got {interpolated_service}"
+    assert interpolated_service is None, f"Expected Service Field to be None, got {interpolated_service}"
     
     # Event Type should be 'Interpolated'
     assert interpolated_row['event_type'][0] == 'Interpolated', "event_type should be 'Interpolated'"

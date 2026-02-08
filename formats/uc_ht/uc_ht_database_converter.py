@@ -64,8 +64,8 @@ class UCHTDatabaseConverter(DatabaseConverter):
         if is_user_dir:
             user_dirs = [data_path]
         else:
-            # Identify users (folders)
-            user_dirs = sorted([d for d in data_path.iterdir() if d.is_dir()])
+            # Identify users (folders), excluding hidden ones like .git
+            user_dirs = sorted([d for d in data_path.iterdir() if d.is_dir() and not d.name.startswith(".")])
         
         user_ids = [d.name for d in user_dirs]
 

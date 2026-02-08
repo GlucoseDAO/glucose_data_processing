@@ -125,5 +125,13 @@ class MLDataPreparer:
 
             ml_df = ml_df.select([c for c in ml_df.columns if c in allowed_cols])
         
+        # Final step: Fill nulls with empty strings for all Utf8 (string) columns
+        # This is the "last step" where empty strings are safe.
+        string_cols = [col for col, dtype in ml_df.schema.items() if dtype == pl.Utf8]
+        if string_cols:
+            ml_df = ml_df.with_columns([
+                pl.col(col).fill_null("") for col in string_cols
+            ])
+        
         return ml_df
 

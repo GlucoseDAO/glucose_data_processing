@@ -738,7 +738,10 @@ class GlucoseMLPreprocessor:
             field_categories_dict = self._field_categories_dict
         return self.ml_preparer.prepare_ml_data(df, field_categories_dict)
 
-    def process(self, csv_folder: Path, output_file: Optional[Path] = None, last_sequence_id: int = 0, database_type: Optional[str] = None, append: bool = False, dataset_name: Optional[str] = None, quiet: bool = False) -> Tuple[pl.DataFrame, Dict[str, Any], int]:
+    def process(self, csv_folder: Union[str, Path], output_file: Optional[Path] = None, last_sequence_id: int = 0, database_type: Optional[str] = None, append: bool = False, dataset_name: Optional[str] = None, quiet: bool = False) -> Tuple[pl.DataFrame, Dict[str, Any], int]:
+        # Ensure csv_folder is a Path object
+        csv_folder = Path(csv_folder)
+        
         if not quiet:
             logger.info(f"Starting glucose data preprocessing for {csv_folder.name}...")
         
