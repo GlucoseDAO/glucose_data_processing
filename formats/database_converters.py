@@ -180,7 +180,7 @@ class MonoUserDatabaseConverter(DatabaseConverter):
             raise ValueError(f"Input must be a directory containing CSV files, got: {data_folder}")
         
         # Use folder name as user_id for mono-user databases
-        user_id = csv_path.name
+        user_id = "Subject 000" # csv_path.name
         
         all_data = []
         

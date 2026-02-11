@@ -11,6 +11,7 @@ The `GlucoseMLPreprocessor` is governed by a YAML configuration file (typically 
 | `min_sequence_len` | int | 200 | Minimum number of contiguous records required for a sequence to be preserved. |
 | `create_fixed_frequency` | bool | true | Whether to resample data to the `expected_interval_minutes`. |
 | `glucose_only` | bool | false | If true, drops all non-glucose fields and non-glucose records. |
+| `round_precision` | int | 3 | Number of digits after the decimal point to round numeric fields. Can be negative. |
 | `save_intermediate_files` | bool | false | If true, exports CSVs at each stage of the pipeline for debugging. |
 
 ## Calibration Settings

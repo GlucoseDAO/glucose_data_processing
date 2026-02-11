@@ -301,6 +301,7 @@ class GlucoseMLPreprocessor:
             last_step=cli_overrides.get('last_step', config.get('last_step', 0)),
             verbose=cli_overrides.get('verbose', False),
             config=config,
+            round_precision=cli_overrides.get('round_precision', config.get('round_precision', 3)),
             first_n_users=cli_overrides.get('first_n_users', config.get('first_n_users', None)),
             output_file=cli_overrides.get('output_file', config.get('output_file', None)),
             print_statistics=cli_overrides.get('print_statistics', config.get('print_statistics', True))
@@ -335,6 +336,7 @@ class GlucoseMLPreprocessor:
         last_step: int = 0,
         verbose: bool = False,
         config: Optional[Dict[str, Any]] = None,
+        round_precision: int = 3,
         first_n_users: Optional[int] = None,
         output_file: Optional[str] = None,
         print_statistics: bool = True,
@@ -353,10 +355,15 @@ class GlucoseMLPreprocessor:
         self.last_step = last_step
         self.verbose = verbose
         self.config = config if config is not None else {}
+        self.round_precision = round_precision
         self.output_file = Path(output_file) if output_file else None
         self.print_statistics = print_statistics
         if first_n_users is not None:
             self.config['first_n_users'] = first_n_users
+        
+        # Ensure round_precision is in config for sub-components
+        if 'round_precision' not in self.config:
+            self.config['round_precision'] = self.round_precision
         
         self.fields = StandardFieldNames()
         self._original_record_count: int = 0

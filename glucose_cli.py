@@ -155,6 +155,11 @@ def main(
         None,
         "--first-n-users",
         help="Process only the first n users (for multi-user databases). If 0 or not specified, all users are processed."
+    ),
+    round_precision: Optional[int] = typer.Option(
+        None,
+        "--round-precision",
+        help="Number of digits after the decimal point to round numeric fields. Can be negative for rounding to the left of the decimal point (default: 3)."
     )
 ) -> None:
     """
@@ -223,6 +228,8 @@ def main(
             cli_overrides['last_step'] = last_step
         if first_n_users is not None and first_n_users > 0:
             cli_overrides['first_n_users'] = first_n_users
+        if round_precision is not None:
+            cli_overrides['round_precision'] = round_precision
 
         # Create preprocessor
         if resolved_config_file:
@@ -265,7 +272,7 @@ def main(
             logger.info(f"   Save intermediate files: {save_intermediate_files}")
             logger.info(f"   Glucose only mode: {glucose_only}")
             logger.info(f"   Fixed-frequency data: {create_fixed_frequency}")
-            logger.info(f"   Last step: {last_step if last_step > 0 else 'All'}")
+            logger.info(f"   Last step: {last_step if last_step is not None and last_step > 0 else 'All'}")
             if len(validated_folders) == 1:
                 logger.info("Starting glucose data processing pipeline...")
             else:
@@ -323,7 +330,8 @@ def main(
                 'min_sequence_len': preprocessor.min_sequence_len,
                 'calibration_period_minutes': preprocessor.calibration_period_minutes,
                 'remove_after_calibration_hours': preprocessor.remove_after_calibration_hours,
-                'create_fixed_frequency': preprocessor.create_fixed_frequency
+                'create_fixed_frequency': preprocessor.create_fixed_frequency,
+                'round_precision': preprocessor.round_precision
             }
             stats_output = sm_print_statistics(statistics, params)
             logger.info(stats_output)

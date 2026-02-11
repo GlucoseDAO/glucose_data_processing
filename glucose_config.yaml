@@ -8,6 +8,7 @@ min_sequence_len: 200
 save_intermediate_files: false
 create_fixed_frequency: true
 glucose_only: false
+round_precision: 3
 calibration_period_minutes: 165 # 2h 45m
 remove_after_calibration_hours: 24
 
