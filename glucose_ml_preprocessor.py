@@ -37,7 +37,7 @@ from processing.steps.interpolation import ValueInterpolator
 from processing.steps.filtering import SequenceFilter
 from processing.steps.fixed_frequency import FixedFreqGenerator
 from processing.steps.ml_prep import MLDataPreparer
-from processing.stats_manager import StatsManager
+from processing.stats_manager import StatsManager, print_statistics
 
 warnings.filterwarnings('ignore')
 
@@ -770,7 +770,7 @@ class GlucoseMLPreprocessor:
             and database_converter is not None
             and callable(getattr(database_converter, "iter_user_event_frames", None))
         ):
-            return self._process_streaming_from_converter(
+            ml_df, stats, last_sequence_id = self._process_streaming_from_converter(
                 data_folder=csv_folder,
                 database_type=database_type,
                 output_file=output_file,
@@ -780,57 +780,55 @@ class GlucoseMLPreprocessor:
                 dataset_name=dataset_name,
                 quiet=quiet
             )
-        
-        if not quiet:
-            logger.info("STEP 1: Consolidating CSV files (mandatory step)...")
-        df = self.consolidate_glucose_data(csv_folder)
-        
-        # Use common processing pipeline for steps 2-8 (handles last_step internally)
-        expected_standard_cols = self._compute_expected_output_columns([database_type], use_display_names=False)
-        
-        ml_df, stats, last_sequence_id = _run_processing_pipeline(
-            df, last_sequence_id, field_categories_dict,
-            self.gap_detector, self.data_cleaner, self.interpolator, self.filter_step, self.fixed_freq_generator, self.ml_preparer, self.stats_manager,
-            self.create_fixed_frequency,
-            log_steps=not quiet,
-            last_step=self.last_step,
-            save_intermediate=self.save_intermediate_files,
-            output_dir=output_file.parent if output_file else Path("OUTPUT"),
-            output_prefix=output_file.stem if output_file else "processed",
-            expected_standard_cols=expected_standard_cols
-        )
-        
-        # Add dataset name if provided
-        if dataset_name:
-            dataset_name_display = CSVFormatConverter.get_display_name(StandardFieldNames.DATASET_NAME)
-            ml_df = ml_df.with_columns(pl.lit(dataset_name).alias(dataset_name_display))
-
-        if output_file:
-            # When appending, we only write header if the file is empty or doesn't exist
-            include_header = not (append and output_file.exists() and output_file.stat().st_size > 0)
-            mode = "a" if append else "w"
-            
-            # Polars write_csv doesn't support mode="a" directly for path, need to open file
-            if append:
-                with open(output_file, "ab") as f:
-                    ml_df.write_csv(f, include_header=include_header)
-            else:
-                ml_df.write_csv(output_file)
-            
+        else:
             if not quiet:
-                logger.info(f"Final processed data saved to: {output_file}")
+                logger.info("STEP 1: Consolidating CSV files (mandatory step)...")
+            df = self.consolidate_glucose_data(csv_folder)
             
-            # Save statistics to file if not appending (if appending, higher level will handle it)
-            if not append:
-                from processing.stats_manager import print_statistics
-                stats_str = print_statistics(stats, preprocessor_params={
-                    'expected_interval_minutes': self.expected_interval_minutes,
-                    'small_gap_max_minutes': self.small_gap_max_minutes,
-                    'min_sequence_len': self.min_sequence_len,
-                    'glucose_only': self.glucose_only,
-                    'create_fixed_frequency': self.create_fixed_frequency
-                })
-                self._save_stats_to_file(stats_str, output_file)
+            # Use common processing pipeline for steps 2-8 (handles last_step internally)
+            expected_standard_cols = self._compute_expected_output_columns([database_type], use_display_names=False)
+            
+            ml_df, stats, last_sequence_id = _run_processing_pipeline(
+                df, last_sequence_id, field_categories_dict,
+                self.gap_detector, self.data_cleaner, self.interpolator, self.filter_step, self.fixed_freq_generator, self.ml_preparer, self.stats_manager,
+                self.create_fixed_frequency,
+                log_steps=not quiet,
+                last_step=self.last_step,
+                save_intermediate=self.save_intermediate_files,
+                output_dir=output_file.parent if output_file else Path("OUTPUT"),
+                output_prefix=output_file.stem if output_file else "processed",
+                expected_standard_cols=expected_standard_cols
+            )
+            
+            # Add dataset name if provided
+            if dataset_name:
+                dataset_name_display = CSVFormatConverter.get_display_name(StandardFieldNames.DATASET_NAME)
+                ml_df = ml_df.with_columns(pl.lit(dataset_name).alias(dataset_name_display))
+
+            if output_file:
+                # When appending, we only write header if the file is empty or doesn't exist
+                include_header = not (append and output_file.exists() and output_file.stat().st_size > 0)
+                
+                # Polars write_csv doesn't support mode="a" directly for path, need to open file
+                if append:
+                    with open(output_file, "ab") as f:
+                        ml_df.write_csv(f, include_header=include_header)
+                else:
+                    ml_df.write_csv(output_file)
+                
+                if not quiet:
+                    logger.info(f"Final processed data saved to: {output_file}")
+            
+        # Save statistics to file if not appending (if appending, higher level will handle it)
+        if output_file and not append:
+            stats_str = print_statistics(stats, preprocessor_params={
+                'expected_interval_minutes': self.expected_interval_minutes,
+                'small_gap_max_minutes': self.small_gap_max_minutes,
+                'min_sequence_len': self.min_sequence_len,
+                'glucose_only': self.glucose_only,
+                'create_fixed_frequency': self.create_fixed_frequency
+            })
+            self._save_stats_to_file(stats_str, output_file)
         
         # Add database info to stats for better aggregation later
         stats['database_info'] = {
