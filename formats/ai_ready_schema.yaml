@@ -23,10 +23,14 @@ field_categories:
   respiratory_rate: continuous
   oxygen_saturation_percent: continuous
   sleep_level: occasional_avg
+  y_observed: service
+  steps_observed: service
+  hr_observed: service
 fill_during_interpolation:
   - user_id
   - recommended_split
   - age
+  - study_group
 converters:
   cgm_dexcom_g6:
     format: json
@@ -49,7 +53,7 @@ converters:
     event_type: Activity
     user_id_source: header.user_id
     records_path: body.activity
-    timestamp_path: effective_time_frame.time_interval.start_date_time
+    timestamp_path: effective_time_frame.time_interval.end_date_time
     field_paths:
       base_movement_quantity.value: step_count
   garmin_calorie:

@@ -36,6 +36,7 @@ from processing.steps.data_cleaning import DataCleaner
 from processing.steps.interpolation import ValueInterpolator
 from processing.steps.filtering import SequenceFilter
 from processing.steps.fixed_frequency import FixedFreqGenerator
+from processing.steps.sentinel_cleaning import SentinelCleaner
 from processing.steps.ml_prep import MLDataPreparer
 from processing.stats_manager import StatsManager
 
@@ -70,6 +71,7 @@ def _run_processing_pipeline(
     field_categories_dict: Optional[Dict[str, Any]],
     gap_detector: GapDetector,
     data_cleaner: DataCleaner,
+    sentinel_cleaner: SentinelCleaner,
     interpolator: ValueInterpolator,
     filter_step: SequenceFilter,
     fixed_freq_generator: FixedFreqGenerator,
@@ -95,6 +97,7 @@ def _run_processing_pipeline(
     8. ML data preparation
     """
     cleaning_stats = {}
+    sentinel_stats = {}
     gap_stats = {}
     interp_stats = {}
     filter_stats = {}
@@ -152,6 +155,11 @@ def _run_processing_pipeline(
     if last_step == 1:
         _save_intermediate(df, 1)
         return early_exit(df, cleaning_stats, gap_stats, interp_stats, filter_stats, fixed_freq_stats, glucose_filter_stats, last_sequence_id)
+
+    # STEP 1.5: Sentinel cleaning (stress < 0, resp < 0, HR <= 0 → NULL)
+    if log_steps:
+        logger.info("STEP 1.5: Cleaning sentinel / invalid values...")
+    df, sentinel_stats = sentinel_cleaner.clean_sentinel_values(df, field_categories_dict)
 
     # STEP 2: Data cleaning (removing covariates in large glucose gaps)
     if log_steps:
@@ -235,6 +243,7 @@ def _process_user_frame_task(
     data_cleaner = DataCleaner(
         small_gap_max_minutes=params['small_gap_max_minutes']
     )
+    sentinel_cleaner = SentinelCleaner()
     interpolator = ValueInterpolator(
         expected_interval_minutes=params['expected_interval_minutes'],
         small_gap_max_minutes=params['small_gap_max_minutes']
@@ -253,7 +262,7 @@ def _process_user_frame_task(
     # Start with sequence ID 0 for local count
     ml_df, user_stats, user_max_id = _run_processing_pipeline(
         user_df, 0, field_categories_dict,
-        gap_detector, data_cleaner, interpolator, filter_step, fixed_freq_generator, ml_preparer, stats_manager,
+        gap_detector, data_cleaner, sentinel_cleaner, interpolator, filter_step, fixed_freq_generator, ml_preparer, stats_manager,
         params['create_fixed_frequency'],
         last_step=params.get('last_step', 0),
         save_intermediate=save_intermediate_files,
@@ -389,6 +398,7 @@ class GlucoseMLPreprocessor:
         self.fixed_freq_generator = FixedFreqGenerator(
             expected_interval_minutes=expected_interval_minutes
         )
+        self.sentinel_cleaner = SentinelCleaner()
         self.ml_preparer = MLDataPreparer(config=self.config)
         self.stats_manager = StatsManager()
 
@@ -790,7 +800,7 @@ class GlucoseMLPreprocessor:
         
         ml_df, stats, last_sequence_id = _run_processing_pipeline(
             df, last_sequence_id, field_categories_dict,
-            self.gap_detector, self.data_cleaner, self.interpolator, self.filter_step, self.fixed_freq_generator, self.ml_preparer, self.stats_manager,
+            self.gap_detector, self.data_cleaner, self.sentinel_cleaner, self.interpolator, self.filter_step, self.fixed_freq_generator, self.ml_preparer, self.stats_manager,
             self.create_fixed_frequency,
             log_steps=not quiet,
             last_step=self.last_step,

@@ -66,17 +66,52 @@ class FixedFreqGenerator:
         unique_sequences = df[seq_id_col].unique().to_list()
         all_fixed_sequences: List[pl.DataFrame] = []
         
+        # Mask columns that may be added by _create_fixed_frequency_sequence
+        _mask_cols = ["y_observed", "steps_observed", "hr_observed"]
+        
         for seq_id in unique_sequences:
             seq_data = df.filter(pl.col(seq_id_col) == seq_id).sort(ts_col)
             
             if len(seq_data) < 2:
-                all_fixed_sequences.append(seq_data.select(df.columns).cast(df.schema))
+                # Add mask columns for short sequences based on actual data presence
+                short_df = seq_data.select(df.columns).cast(df.schema)
+                glucose_col = next((c for c in ['glucose_value_mgdl', 'glucose_value', 'glucose'] if c in short_df.columns), None)
+                if "y_observed" not in short_df.columns:
+                    if glucose_col and glucose_col in short_df.columns:
+                        short_df = short_df.with_columns(
+                            pl.when(pl.col(glucose_col).is_not_null()).then(pl.lit(1)).otherwise(pl.lit(0)).alias("y_observed")
+                        )
+                    else:
+                        short_df = short_df.with_columns(pl.lit(0).alias("y_observed"))
+                if "steps_observed" not in short_df.columns:
+                    if "step_count" in short_df.columns:
+                        short_df = short_df.with_columns(
+                            pl.when(pl.col("step_count").is_not_null()).then(pl.lit(1)).otherwise(pl.lit(0)).alias("steps_observed")
+                        )
+                    else:
+                        short_df = short_df.with_columns(pl.lit(0).alias("steps_observed"))
+                if "hr_observed" not in short_df.columns:
+                    if "heart_rate" in short_df.columns:
+                        short_df = short_df.with_columns(
+                            pl.when(pl.col("heart_rate").is_not_null()).then(pl.lit(1)).otherwise(pl.lit(0)).alias("hr_observed")
+                        )
+                    else:
+                        short_df = short_df.with_columns(pl.lit(0).alias("hr_observed"))
+                all_fixed_sequences.append(short_df)
                 continue
                 
             fixed_freq_stats['sequences_processed'] += 1
             
             fixed_seq_data = self._create_fixed_frequency_sequence(seq_data, seq_id, fixed_freq_stats, field_categories_dict)
-            fixed_seq_data = fixed_seq_data.select(df.columns).cast(df.schema)
+            # Preserve mask columns before casting original columns back to original types
+            mask_data = {mc: fixed_seq_data[mc] for mc in _mask_cols if mc in fixed_seq_data.columns}
+            # Cast original columns to original schema types
+            orig_cols = [c for c in df.columns if c in fixed_seq_data.columns]
+            fixed_seq_data = fixed_seq_data.select(orig_cols).cast({c: df.schema[c] for c in orig_cols if c in df.schema})
+            # Re-add mask columns
+            for mc, series in mask_data.items():
+                if mc not in fixed_seq_data.columns:
+                    fixed_seq_data = fixed_seq_data.with_columns(series.alias(mc))
             all_fixed_sequences.append(fixed_seq_data)
         
         if all_fixed_sequences:
@@ -352,7 +387,68 @@ class FixedFreqGenerator:
                 col_type = seq_data.schema[col]
                 result_df = result_df.with_columns([pl.lit(None).cast(col_type).alias(col)])
         
-        result_df = result_df.select(seq_data.columns)
+        # --- Core observation masks ------------------------------------------------
+        # y_observed: 1 when a real glucose measurement existed within half-interval
+        #             of this grid point, 0 when the value was purely interpolated.
+        if glucose_col in seq_data.columns:
+            half_interval_sec = (self.expected_interval_minutes * 60) / 2.0
+            glucose_observations = (
+                seq_data.filter(pl.col(glucose_col).is_not_null())
+                .select([ts_col])
+            )
+            if len(glucose_observations) > 0:
+                # For each fixed timestamp, find nearest real glucose reading
+                obs_joined = result_df.select([ts_col]).join_asof(
+                    glucose_observations.with_columns(pl.col(ts_col).alias("_obs_ts")),
+                    on=ts_col,
+                    strategy="nearest",
+                )
+                # Compute mask based on distance to nearest observation
+                y_mask = obs_joined.with_columns(
+                    pl.when(
+                        (pl.col("_obs_ts").is_not_null())
+                        & (
+                            (pl.col(ts_col) - pl.col("_obs_ts")).abs().dt.total_seconds()
+                            <= half_interval_sec
+                        )
+                    )
+                    .then(pl.lit(1))
+                    .otherwise(pl.lit(0))
+                    .alias("y_observed")
+                ).select([ts_col, "y_observed"])
+                result_df = result_df.join(y_mask, on=ts_col, how="left")
+            else:
+                result_df = result_df.with_columns(pl.lit(0).alias("y_observed"))
+        else:
+            result_df = result_df.with_columns(pl.lit(0).alias("y_observed"))
+
+        # steps_observed: 1 when step_count is not null (real steps contributed to bin)
+        if "step_count" in result_df.columns:
+            result_df = result_df.with_columns(
+                pl.when(pl.col("step_count").is_not_null())
+                .then(pl.lit(1))
+                .otherwise(pl.lit(0))
+                .alias("steps_observed")
+            )
+        else:
+            result_df = result_df.with_columns(pl.lit(0).alias("steps_observed"))
+
+        # hr_observed: 1 when heart_rate is not null (real HR reading)
+        if "heart_rate" in result_df.columns:
+            result_df = result_df.with_columns(
+                pl.when(pl.col("heart_rate").is_not_null())
+                .then(pl.lit(1))
+                .otherwise(pl.lit(0))
+                .alias("hr_observed")
+            )
+        else:
+            result_df = result_df.with_columns(pl.lit(0).alias("hr_observed"))
+        # -------------------------------------------------------------------------
+        
+        # Select original columns plus masks
+        mask_cols = ["y_observed", "steps_observed", "hr_observed"]
+        output_cols = list(seq_data.columns) + [m for m in mask_cols if m not in seq_data.columns]
+        result_df = result_df.select([c for c in output_cols if c in result_df.columns])
         
         return result_df
 

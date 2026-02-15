@@ -10,6 +10,7 @@ min_sequence_len: 200
 save_intermediate_files: false
 create_fixed_frequency: true
 glucose_only: false
+step_count_binning: overlap  # 'overlap' (distribute by interval overlap) or 'end_time' (assign to end_date_time bin)
 
 # Streaming buffer control (used when converters expose iter_user_event_frames)
 streaming_max_buffer_mb: 64
@@ -23,6 +24,7 @@ service_fields_allowlist:
   - "event_type"
   - "user_id"
   - "recommended_split"
+  - "study_group"
 
 # Field mappings configuration
 output_fields:
@@ -38,6 +40,10 @@ output_fields:
   - "oxygen_saturation_percent"
   - "age"
   - "recommended_split"
+  - "study_group"
+  - "y_observed"
+  - "steps_observed"
+  - "hr_observed"
 
 field_to_display_name_map:
   timestamp: "Timestamp (YYYY-MM-DDThh:mm:ss)"
@@ -52,6 +58,10 @@ field_to_display_name_map:
   oxygen_saturation_percent: "Oxygen Saturation (%)"
   age: "Age"
   recommended_split: "Recommended Split"
+  study_group: "Study Group"
+  y_observed: "Glucose Observed"
+  steps_observed: "Steps Observed"
+  hr_observed: "HR Observed"
 
 # Database-specific configurations
 dexcom:

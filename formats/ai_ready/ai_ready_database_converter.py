@@ -178,10 +178,21 @@ class AIReadyDatabaseConverter(DatabaseConverter):
             if first_n_users and int(first_n_users) > 0:
                 user_ids = user_ids[: int(first_n_users)]
 
+            # Filter out users missing required metadata (e.g. study_group)
+            skipped_no_meta = []
             for user_id in user_ids:
-                df = self._extract_user_frame(zip_ref, layout, user_id, participants[user_id], interval_minutes=interval_minutes)
+                meta = participants[user_id]
+                study_group = str(meta.get("study_group", "")).strip()
+                if not study_group:
+                    skipped_no_meta.append(user_id)
+                    continue
+                df = self._extract_user_frame(zip_ref, layout, user_id, meta, interval_minutes=interval_minutes)
                 if len(df) > 0:
                     yield df
+            if skipped_no_meta:
+                logger.warning(
+                    f"Skipped {len(skipped_no_meta)} user(s) with missing study_group: {skipped_no_meta[:10]}{'...' if len(skipped_no_meta) > 10 else ''}"
+                )
 
     def _read_participants(
         self, zip_ref: zipfile.ZipFile, layout: _AIReadyZipLayout
@@ -289,16 +300,26 @@ class AIReadyDatabaseConverter(DatabaseConverter):
         if calories is not None:
             frames.append(self._resample(calories, interval, agg="sum"))
 
-        steps = self._extract_series_df(
-            zip_ref,
-            layout.garmin_file("physical_activity", user_id, "activity"),
-            records_path="body.activity",
-            timestamp_path="effective_time_frame.time_interval.start_date_time",
-            value_path="base_movement_quantity.value",
-            value_col="step_count",
-        )
-        if steps is not None:
-            frames.append(self._resample(steps, interval, agg="sum"))
+        step_binning = self.config.get("step_count_binning", "overlap")
+        if step_binning == "overlap":
+            steps = self._extract_step_intervals_df(
+                zip_ref,
+                layout.garmin_file("physical_activity", user_id, "activity"),
+            )
+            if steps is not None:
+                frames.append(self._resample_step_intervals_by_overlap(steps, interval_minutes))
+        else:
+            # Option A: assign to bin by end_date_time
+            steps = self._extract_series_df(
+                zip_ref,
+                layout.garmin_file("physical_activity", user_id, "activity"),
+                records_path="body.activity",
+                timestamp_path="effective_time_frame.time_interval.end_date_time",
+                value_path="base_movement_quantity.value",
+                value_col="step_count",
+            )
+            if steps is not None:
+                frames.append(self._resample(steps, interval, agg="sum"))
 
         rr = self._extract_series_df(
             zip_ref,
@@ -475,6 +496,127 @@ class AIReadyDatabaseConverter(DatabaseConverter):
                 agg_exprs.append(pl.col(c).mean().alias(c))
 
         return truncated.group_by("timestamp").agg(agg_exprs).sort("timestamp")
+
+    def _extract_step_intervals_df(
+        self,
+        zip_ref: zipfile.ZipFile,
+        member: str,
+    ) -> Optional[pl.DataFrame]:
+        """
+        Extract step records with both start and end timestamps for interval-aware binning.
+        Returns DataFrame with columns: ts_start, ts_end, step_count.
+        """
+        try:
+            obj = _json_load_from_zip(zip_ref, member)
+        except KeyError:
+            return None
+
+        records = _dig(obj, "body.activity")
+        if not isinstance(records, list):
+            return None
+
+        starts: list[datetime] = []
+        ends: list[datetime] = []
+        vals: list[float] = []
+        for rec in records:
+            if not isinstance(rec, dict):
+                continue
+            ts_start = _dig(rec, "effective_time_frame.time_interval.start_date_time")
+            ts_end = _dig(rec, "effective_time_frame.time_interval.end_date_time")
+            val = _dig(rec, "base_movement_quantity.value")
+            if not isinstance(ts_start, str) or not isinstance(ts_end, str) or val is None:
+                continue
+            dt_start = _parse_timestamp_to_naive_utc(ts_start)
+            dt_end = _parse_timestamp_to_naive_utc(ts_end)
+            if dt_start is None or dt_end is None:
+                continue
+            try:
+                fv = float(val)
+            except Exception:
+                continue
+            starts.append(dt_start)
+            ends.append(dt_end)
+            vals.append(fv)
+
+        if not starts:
+            return None
+        return pl.DataFrame({"ts_start": starts, "ts_end": ends, "step_count": vals})
+
+    def _resample_step_intervals_by_overlap(
+        self, df: pl.DataFrame, interval_minutes: int
+    ) -> pl.DataFrame:
+        """
+        Distribute step counts across fixed-width bins proportional to overlap duration.
+
+        For each step interval [ts_start, ts_end] with value V and duration D:
+          - Find all bins that overlap
+          - Assign V * (overlap_seconds / D) to each bin
+          - Sum per bin
+
+        Falls back to assigning 100% to the end_time bin when duration is zero.
+        Bins are defined by truncating timestamps to `interval_minutes` boundaries.
+        """
+        from datetime import timedelta
+
+        interval_td = timedelta(minutes=interval_minutes)
+        interval_sec = interval_minutes * 60
+        bin_ts: list[datetime] = []
+        bin_vals: list[float] = []
+
+        for row in df.iter_rows(named=True):
+            ts_start: datetime = row["ts_start"]
+            ts_end: datetime = row["ts_end"]
+            step_count: float = row["step_count"]
+
+            # Ensure ts_start <= ts_end
+            if ts_start > ts_end:
+                ts_start, ts_end = ts_end, ts_start
+
+            duration_sec = (ts_end - ts_start).total_seconds()
+
+            if duration_sec <= 0:
+                # Zero-duration interval: assign all steps to the bin containing ts_end
+                # Truncate to bin boundary: floor to nearest interval_minutes
+                bin_start = ts_end.replace(
+                    minute=(ts_end.minute // interval_minutes) * interval_minutes,
+                    second=0, microsecond=0,
+                )
+                bin_ts.append(bin_start)
+                bin_vals.append(step_count)
+                continue
+
+            # Find the first bin start at or before ts_start
+            first_bin = ts_start.replace(
+                minute=(ts_start.minute // interval_minutes) * interval_minutes,
+                second=0, microsecond=0,
+            )
+
+            # Iterate through all bins that overlap with [ts_start, ts_end]
+            current_bin = first_bin
+            while current_bin < ts_end:
+                current_bin_end = current_bin + interval_td
+
+                # Calculate overlap between [ts_start, ts_end] and [current_bin, current_bin_end]
+                overlap_start = max(ts_start, current_bin)
+                overlap_end = min(ts_end, current_bin_end)
+                overlap_sec = (overlap_end - overlap_start).total_seconds()
+
+                if overlap_sec > 0:
+                    fraction = overlap_sec / duration_sec
+                    bin_ts.append(current_bin)
+                    bin_vals.append(step_count * fraction)
+
+                current_bin = current_bin_end
+
+        if not bin_ts:
+            return pl.DataFrame({"timestamp": pl.Series([], dtype=pl.Datetime), "step_count": pl.Series([], dtype=pl.Float64)})
+
+        result = pl.DataFrame({"timestamp": bin_ts, "step_count": bin_vals})
+        if result.schema.get("timestamp") != pl.Datetime:
+            result = result.with_columns(pl.col("timestamp").cast(pl.Datetime, strict=False))
+
+        # Sum step contributions per bin
+        return result.group_by("timestamp").agg(pl.col("step_count").sum()).sort("timestamp")
 
     def _outer_join_all(self, frames: list[pl.DataFrame]) -> pl.DataFrame:
         """
