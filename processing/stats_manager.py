@@ -71,7 +71,7 @@ class StatsManager:
                 'count': len(seq_lens),
                 'mean': seq_lens.mean() if not seq_lens.is_empty() else 0,
                 'std': seq_lens.std() if not seq_lens.is_empty() else 0,
-                'min': seq_lens.min() if not seq_lens.is_empty() else 0,
+                'min': seq_lens.min() if not seq_lens.is_empty() else None,
                 '25%': seq_lens.quantile(0.25) if not seq_lens.is_empty() else 0,
                 '50%': seq_lens.median() if not seq_lens.is_empty() else 0,
                 '75%': seq_lens.quantile(0.75) if not seq_lens.is_empty() else 0,
@@ -104,7 +104,7 @@ class StatsManager:
             'sequence_analysis': {
                 'sequence_lengths': sequence_lengths_stats,
                 'longest_sequence': sequence_lengths_stats['max'],
-                'shortest_sequence': sequence_lengths_stats['min'],
+                'shortest_sequence': sequence_lengths_stats['min'],  # None when no sequences
                 'sequences_by_length': sequences_by_length,
                 'all_lengths': all_lengths
             },
@@ -267,8 +267,8 @@ class StatsManager:
                 seq_analysis.get('longest_sequence', 0)
             )
             
-            shortest = seq_analysis.get('shortest_sequence', float('inf'))
-            if shortest < aggregated['sequence_analysis']['shortest_sequence']:
+            shortest = seq_analysis.get('shortest_sequence')
+            if shortest is not None and shortest < aggregated['sequence_analysis']['shortest_sequence']:
                 aggregated['sequence_analysis']['shortest_sequence'] = shortest
             
             gap_analysis = stats.get('gap_analysis', {})
@@ -484,17 +484,21 @@ def print_statistics(stats: Dict[str, Any], preprocessor_params: Optional[Dict[s
         lines.append(f"\nSEQUENCE FILTERING ANALYSIS:")
         lines.append(f"   Original Sequences: {filter_analysis.get('original_sequences', 0):,}")
         lines.append(f"   Sequences After Filtering: {filter_analysis.get('filtered_sequences', 0):,}")
+        lines.append(f"   Sequences Removed: {filter_analysis.get('removed_sequences', 0):,}")
+        lines.append(f"   Records Before Filtering: {filter_analysis.get('original_records', 0):,}")
         lines.append(f"   Records After Filtering: {filter_analysis.get('filtered_records', 0):,}")
+        lines.append(f"   Records Removed: {filter_analysis.get('removed_records', 0):,}")
     
     fixed_freq_analysis = stats.get('fixed_frequency_analysis', {})
     if fixed_freq_analysis:
         lines.append(f"\nFIXED-FREQUENCY ANALYSIS:")
         lines.append(f"   Sequences Processed: {fixed_freq_analysis.get('sequences_processed', 0):,}")
+        lines.append(f"   Records Before: {fixed_freq_analysis.get('total_records_before', 0):,}")
         lines.append(f"   Records After: {fixed_freq_analysis.get('total_records_after', 0):,}")
         
         # Print other fixed-frequency metrics
         skip_keys = {
-            'sequences_processed', 'total_records_after', 'total_records_before',
+            'sequences_processed', 'total_records_before', 'total_records_after',
             'data_density_before', 'data_density_after', 'density_change_explanation'
         }
         for key, val in fixed_freq_analysis.items():
