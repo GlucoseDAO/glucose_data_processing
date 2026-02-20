@@ -92,6 +92,7 @@ def extract_field_categories(database_type: str) -> Dict[str, Any]:
         'occasional_avg': [],
         'occasional_sum': [],
         'service': [],
+        'mask': [],
         'remove_after_calibration': schema.get('remove_after_calibration', True),
         'fill_during_interpolation': schema.get('fill_during_interpolation', [])
     }

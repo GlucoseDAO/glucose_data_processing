@@ -470,15 +470,19 @@ class FixedFreqGenerator:
         # Identify numeric columns and their aggregation types
         sum_cols: set[str] = set()
         avg_cols: set[str] = set()
+        mask_cols: set[str] = set()
         numeric_cols: List[str] = []
         
         if field_categories_dict is not None:
             sum_cols = set(field_categories_dict.get('occasional_sum', []))
             avg_cols = set(field_categories_dict.get('occasional_avg', []))
+            mask_cols = set(field_categories_dict.get('mask', []))
             occasional_all = set(field_categories_dict.get('occasional', []))
             
             for c in cols:
-                if c in occasional_all and c not in {event_type_col, user_id_col} and not c.endswith('_id'):
+                if c in mask_cols:
+                    numeric_cols.append(c)
+                elif c in occasional_all and c not in {event_type_col, user_id_col} and not c.endswith('_id'):
                     numeric_cols.append(c)
         else:
             # Fallback to previous logic if no field categories provided
@@ -506,7 +510,7 @@ class FixedFreqGenerator:
             events_shifted = events_shifted.with_columns(cast_exprs)
         
         for col in cols:
-            if col in numeric_cols:
+            if col in numeric_cols and col not in mask_cols:
                 stat_key = f'{col}_shifted_records'
                 if stat_key not in stats:
                     stats[stat_key] = 0
@@ -514,7 +518,18 @@ class FixedFreqGenerator:
         
         agg_exprs = []
         for col in cols:
-            if col in sum_cols:
+            if col in mask_cols:
+                # Mask columns (binary 0/1 flags): use max() so a grid point is "observed"
+                # if ANY contributing row had a real observation. This correctly handles the
+                # case where CGM and wearable rows snap to the same grid point but carry
+                # their respective masks in separate rows.
+                agg_exprs.append(
+                    pl.when(pl.col(col).is_not_null().any())
+                    .then(pl.col(col).max())
+                    .otherwise(None)
+                    .alias(col)
+                )
+            elif col in sum_cols:
                 agg_exprs.append(
                     pl.when(pl.col(col).is_not_null().any())
                     .then(pl.col(col).sum())

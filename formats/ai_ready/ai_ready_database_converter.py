@@ -254,7 +254,7 @@ class AIReadyDatabaseConverter(DatabaseConverter):
 
         cgm = self._extract_cgm_df(zip_ref, layout, user_id)
         if cgm is not None:
-            cgm = cgm.with_columns(pl.lit(1.0).alias("glucose_observed"))
+            cgm = cgm.with_columns(pl.lit(1.0).alias("y_observed"))
             frames.append(self._resample(cgm, interval, agg="last"))
 
         heart_rate = self._extract_series_df(
@@ -408,7 +408,7 @@ class AIReadyDatabaseConverter(DatabaseConverter):
         df = self._outer_join_all(frames)
         
         # Ensure Priority 1 observation masks are present
-        priority_masks = ["glucose_observed", "steps_observed", "kcal_observed", "hr_observed", "stress_observed", "resp_observed", "spo2_observed"]
+        priority_masks = ["y_observed", "steps_observed", "kcal_observed", "hr_observed", "stress_observed", "resp_observed", "spo2_observed"]
         for mask in priority_masks:
             if mask not in df.columns:
                 df = df.with_columns(pl.lit(0.0).alias(mask))
