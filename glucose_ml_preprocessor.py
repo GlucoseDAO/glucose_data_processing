@@ -190,6 +190,25 @@ def _run_processing_pipeline(
         if log_steps:
             logger.info("STEP 6: Creating fixed-frequency data...")
         df, fixed_freq_stats = fixed_freq_generator.create_fixed_frequency_data(df, field_categories_dict)
+        
+        # Propagate service fields after grid step
+        if StandardFieldNames.USER_ID in df.columns and StandardFieldNames.SEQUENCE_ID in df.columns:
+            df = df.with_columns(
+                pl.col(StandardFieldNames.USER_ID).forward_fill().backward_fill().over(StandardFieldNames.SEQUENCE_ID)
+            )
+        if StandardFieldNames.EVENT_TYPE in df.columns and StandardFieldNames.SEQUENCE_ID in df.columns:
+            df = df.with_columns(
+                pl.col(StandardFieldNames.EVENT_TYPE).fill_null('Interpolated')
+            )
+            
+        # Clean up observation masks
+        mask_cols = [c for c in df.columns if c.endswith('_observed')]
+        if mask_cols:
+            df = df.with_columns([
+                pl.when(pl.col(c) > 0).then(1.0).otherwise(0.0).alias(c)
+                for c in mask_cols
+            ])
+            
         _save_intermediate(df, 6)
     if last_step == 6:
         return early_exit(df, cleaning_stats, gap_stats, interp_stats, filter_stats, fixed_freq_stats, glucose_filter_stats, last_sequence_id)
@@ -197,6 +216,7 @@ def _run_processing_pipeline(
     # STEP 7: Filtering to glucose-only data
     if log_steps:
         logger.info("STEP 7: Filtering to glucose-only data...")
+        
     df, glucose_filter_stats = filter_step.filter_glucose_only(df)
     if filter_step.glucose_only:
         _save_intermediate(df, 7)

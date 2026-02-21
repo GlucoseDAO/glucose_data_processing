@@ -41,6 +41,9 @@ field_categories:
   intensity: occasional_avg
   activity_intensity: occasional_avg
   sleep_level: occasional_avg
+  y_observed: mask
+  steps_observed: mask
+  hr_observed: mask
   calendar_date: service
   sleep_levels_map_deep: occasional_sum
   sleep_levels_map_light: occasional_sum
