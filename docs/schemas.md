@@ -53,6 +53,10 @@ converters:
 - `uom_schema.yaml`: University of Manchester T1D database.
 - `dexcom_schema.yaml`: Dexcom G6 system.
 - `freestyle_libre3_schema.yaml`: Abbott FreeStyle Libre 3.
-- `ai_ready_schema.yaml`: AI-READY (BIDS-like) zip dataset.
+- `ai_ready_schema.yaml`: AI-READI (BIDS-like) zip dataset.
+- `hupa_schema.yaml`: HUPA dataset (CGM with heart rate, steps, meals, insulin).
+- `uc_ht_schema.yaml`: UC_HT dataset (Type 1 + healthy controls with CGM, HR, steps).
+- `loop_schema.yaml`: Loop automated insulin delivery system dataset.
+- `medtronic_schema.yaml`: Medtronic pump/CGM export format.
 - `minidose1_schema.yaml`: MiniDose1 clinical trial dataset.
 

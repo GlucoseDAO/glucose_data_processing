@@ -1,6 +1,6 @@
 # Pipeline Configuration
 
-The `GlucoseMLPreprocessor` is governed by a YAML configuration file (typically `glucose_config.yaml`). Command-line arguments take precedence over these settings.
+The `GlucoseMLPreprocessor` is governed by a YAML configuration file (typically `glucose_config.yaml`). Command-line arguments take precedence over these settings. If `glucose_config.yaml` exists in the current directory, it is loaded automatically even without `--config`.
 
 ## Core Parameters
 
@@ -16,15 +16,18 @@ The `GlucoseMLPreprocessor` is governed by a YAML configuration file (typically 
 
 ## Calibration Settings
 
-- `calibration_period_minutes`: Duration (default: 165m) considered a "startup" or "calibration" period.
-- `remove_after_calibration_hours`: Period of data following a calibration event that should be purged due to potential instability.
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `remove_calibration` | bool | true | Remove calibration events to create interpolatable gaps. |
+| `calibration_period_minutes` | int | 165 | Duration (in minutes) of a startup/calibration period (≈ 2 h 45 m). |
+| `remove_after_calibration_hours` | int | 24 | Hours of data following a calibration event to purge due to potential instability. |
 
 ## Output Configuration
 
 ### `output_file`
-The default path where the processed dataset will be saved. 
+The default path where the processed dataset will be saved.
 - **Type**: string (path)
-- **Default**: `"OUTPUT/processed_dataset.csv"`
+- **Default**: not set – filename is generated from the input folder name (e.g., `OUTPUT/uom_ml_ready.csv`).
 
 ### `output_fields`
 A list of standardized field names to include in the final CSV. Fields excluded from this list will be dropped during the final preparation step.
@@ -37,24 +40,27 @@ Example: `glucose_value_mgdl: "Glucose Value (mg/dL)"`
 
 The final output filename is resolved using the following priority:
 
-1.  **Command Line**: Explicitly provided via `--output` or `-o`.
-2.  **Configuration**: Defined by the `output_file` field in the YAML config.
-3.  **Schema Default**: If neither of the above are set, and a **single** dataset is provided, the pipeline looks up the `database` field in the database's schema (e.g., `uom.csv`).
-4.  **Generic Fallback**: If multiple datasets are combined or no schema name is found, it defaults to `OUTPUT/processed_dataset.csv`.
+1. **Command Line**: Explicitly provided via `--output` or `-o`.
+2. **Configuration**: Defined by the `output_file` field in the YAML config.
+3. **Folder-name-based**: Generated from the input folder/ZIP names joined with underscores and suffixed with `_ml_ready.csv` (e.g., `OUTPUT/uom_ml_ready.csv` for `DATA/uom`).
 
-Note: Since the default `glucose_config.yaml` often contains an `output_file` entry, you may need to comment it out or remove it if you want to use the "Smart Default" schema-based naming.
+When multiple datasets are combined the names are joined: `OUTPUT/hupa_uom_ml_ready.csv`.
 
 ## Database-Specific Overrides
 
-Settings can be customized per database type under the `database_configs` section:
+Settings can be customized per database type by adding a top-level key matching the database name in the YAML config:
 
 ```yaml
-database_configs:
-  dexcom:
-    high_glucose_value: 401
-    low_glucose_value: 39
-    remove_calibration: true
-  ai_ready:
-    start_with_user_id: "1023"
+dexcom:
+  high_glucose_value: 401
+  low_glucose_value: 39
+  remove_calibration: true
+
+hupa:
+  # HUPA dataset specific settings
+
+uc_ht:
+  # UC_HT dataset specific settings
 ```
 
+The supported database keys are: `dexcom`, `libre3`, `uom`, `hupa`, `uc_ht`, `medtronic`, `minidose1`, `loop`, `ai_ready`.
