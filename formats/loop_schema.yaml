@@ -8,7 +8,7 @@ field_categories:
   timestamp: service
   event_type: service
   glucose_value_mgdl: continuous
-  basal_rate: continuous
+  basal_rate: fill_during_interpolation
   fast_acting_insulin_u: occasional_sum
   carb_grams: occasional_sum
   user_id: service

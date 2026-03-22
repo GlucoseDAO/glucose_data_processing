@@ -65,9 +65,18 @@ class FixedFreqGenerator:
         
         unique_sequences = df[seq_id_col].unique().to_list()
         all_fixed_sequences: List[pl.DataFrame] = []
-        
+
+        # Pre-sort once and partition by sequence_id — avoids O(n_sequences × n_rows) filter scans.
+        df_sorted = df.sort([seq_id_col, ts_col])
+        seq_partitions: dict[int, pl.DataFrame] = {
+            part[seq_id_col][0]: part
+            for part in df_sorted.partition_by(seq_id_col, maintain_order=True)
+        }
+
         for seq_id in unique_sequences:
-            seq_data = df.filter(pl.col(seq_id_col) == seq_id).sort(ts_col)
+            seq_data = seq_partitions.get(seq_id)
+            if seq_data is None:
+                continue
             
             if len(seq_data) < 2:
                 all_fixed_sequences.append(seq_data.select(df.columns).cast(df.schema))
@@ -125,35 +134,41 @@ class FixedFreqGenerator:
                 'total_intervals': 0,
                 'total_points': 0
             }
-        
+
         interval_seconds = interval_minutes * 60
-        total_points = 0
-        total_intervals = 0
-        
-        for seq_id in df[seq_id_col].unique().to_list():
-            seq_data = df.filter(pl.col(seq_id_col) == seq_id).sort(ts_col)
-            
-            if len(seq_data) < 2:
-                total_points += 1
-                total_intervals += 1
-                continue
-            
-            first_ts = seq_data[ts_col].min()
-            last_ts = seq_data[ts_col].max()
-            if first_ts is None or last_ts is None:
-                continue
-            duration_seconds = (last_ts - first_ts).total_seconds()
-            
-            num_intervals = max(1, int(duration_seconds / interval_seconds) + 1)
-            num_points = len(seq_data)
-            
-            total_points += num_points
-            total_intervals += num_intervals
-        
+
+        # Single group_by pass — avoids per-sequence filter scans over the whole frame.
+        seq_stats = (
+            df.group_by(seq_id_col)
+            .agg([
+                pl.col(ts_col).min().alias("first_ts"),
+                pl.col(ts_col).max().alias("last_ts"),
+                pl.len().alias("n_points"),
+            ])
+        )
+
+        total_points = int(seq_stats["n_points"].sum())
+
+        duration_col = (
+            (seq_stats["last_ts"] - seq_stats["first_ts"])
+            .dt.total_seconds()
+        )
+        # Sequences with < 2 points get 1 interval; others use duration-based count.
+        n_intervals_col = (
+            pl.Series(
+                values=[
+                    1 if n < 2 or d is None else max(1, int(d / interval_seconds) + 1)
+                    for n, d in zip(seq_stats["n_points"].to_list(), duration_col.to_list())
+                ],
+                dtype=pl.Int64,
+            )
+        )
+        total_intervals = int(n_intervals_col.sum())
+
         return {
             'avg_points_per_interval': total_points / total_intervals if total_intervals > 0 else 0.0,
             'total_intervals': total_intervals,
-            'total_points': total_points
+            'total_points': total_points,
         }
 
     def _calculate_density_change_explanation(

@@ -1,0 +1,47 @@
+# Loop AID (Automated Insulin Delivery) dataset processing config
+# - Multi-user database, all participants in shared pipe-separated text files
+# - Modalities: CGM (mmol/L → mg/dL), BGM, Basal rate, Bolus insulin, Food/carbs
+# - No heart rate, steps, or calories in this dataset
+# - Timestamps are UTC, no calibration removal needed
+
+# General preprocessing settings
+expected_interval_minutes: 5
+small_gap_max_minutes: 15
+min_sequence_len: 200
+create_fixed_frequency: true
+glucose_only: false
+
+# Loop does not use Dexcom calibration periods
+calibration_period_minutes: 165
+remove_after_calibration_hours: 24
+
+# Only emit fields that Loop actually provides — avoids empty placeholder columns
+restrict_output_to_config_fields: true
+service_fields_allowlist:
+  - "timestamp"
+  - "event_type"
+  - "user_id"
+
+# Output fields (standard names matching loop_schema.yaml field_categories)
+output_fields:
+  - "timestamp"
+  - "event_type"
+  - "user_id"
+  - "glucose_value_mgdl"
+  - "basal_rate"
+  - "fast_acting_insulin_u"
+  - "carb_grams"
+
+field_to_display_name_map:
+  timestamp: "Timestamp"
+  event_type: "Event Type"
+  user_id: "User ID"
+  glucose_value_mgdl: "Glucose (mg/dL)"
+  basal_rate: "Basal Rate (U/h)"
+  fast_acting_insulin_u: "Bolus Insulin (U)"
+  carb_grams: "Carbohydrates (g)"
+
+# Database-specific configurations
+loop:
+  # Multi-user database — all users in shared pipe-separated files
+  # CGM and BGM values are stored in mmol/L and converted to mg/dL on read

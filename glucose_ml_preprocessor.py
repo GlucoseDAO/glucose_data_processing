@@ -669,7 +669,7 @@ class GlucoseMLPreprocessor:
             initializer=_init_worker_process,
             initargs=(params,)
         ) as executor:
-            max_active_tasks = max_workers * 2
+            max_active_tasks = max_workers
             futures = []
             
             typed_iter_fn = cast(Iterable[pl.DataFrame], iter_fn(data_folder, interval_minutes=self.expected_interval_minutes))
