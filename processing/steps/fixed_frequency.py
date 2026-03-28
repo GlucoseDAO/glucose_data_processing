@@ -25,7 +25,7 @@ class FixedFreqGenerator:
         """
         seq_id_col = StandardFieldNames.SEQUENCE_ID
         if df.height == 0 or seq_id_col not in df.columns:
-            logger.info("Empty dataframe or missing sequence_id - skipping fixed-frequency creation")
+            logger.debug("Empty dataframe or missing sequence_id - skipping fixed-frequency creation")
             return df, {
                 'sequences_processed': 0,
                 'total_records_before': 0,
@@ -43,7 +43,7 @@ class FixedFreqGenerator:
                 'density_change_explanation': {}
             }
 
-        logger.info(f"Creating fixed-frequency data with {self.expected_interval_minutes}-minute intervals...")
+        logger.debug(f"Creating fixed-frequency data with {self.expected_interval_minutes}-minute intervals...")
         
         ts_col = StandardFieldNames.TIMESTAMP
         seq_id_col = StandardFieldNames.SEQUENCE_ID
@@ -105,22 +105,22 @@ class FixedFreqGenerator:
         )
         fixed_freq_stats['density_change_explanation'] = density_change_explanation
         
-        logger.info(f"Processed {fixed_freq_stats['sequences_processed']} sequences")
-        logger.info(f"Time adjustments made: {fixed_freq_stats['time_adjustments']}")
-        logger.info(f"Glucose interpolations: {fixed_freq_stats['glucose_interpolations']}")
-        logger.info(f"Insulin records shifted: {fixed_freq_stats['insulin_shifted_records']}")
-        logger.info(f"Carb records shifted: {fixed_freq_stats['carb_shifted_records']}")
-        logger.info(f"Records before: {fixed_freq_stats['total_records_before']:,}")
-        logger.info(f"Records after: {fixed_freq_stats['total_records_after']:,}")
+        logger.debug(f"Processed {fixed_freq_stats['sequences_processed']} sequences")
+        logger.debug(f"Time adjustments made: {fixed_freq_stats['time_adjustments']}")
+        logger.debug(f"Glucose interpolations: {fixed_freq_stats['glucose_interpolations']}")
+        logger.debug(f"Insulin records shifted: {fixed_freq_stats['insulin_shifted_records']}")
+        logger.debug(f"Carb records shifted: {fixed_freq_stats['carb_shifted_records']}")
+        logger.debug(f"Records before: {fixed_freq_stats['total_records_before']:,}")
+        logger.debug(f"Records after: {fixed_freq_stats['total_records_after']:,}")
         
         before_density = fixed_freq_stats['data_density_before']
         after_density = fixed_freq_stats['data_density_after']
         explanation = fixed_freq_stats['density_change_explanation']
         
-        logger.info(f"Data density: {before_density['avg_points_per_interval']:.2f} -> {after_density['avg_points_per_interval']:.2f} points/interval ({explanation.get('density_change_pct', 0):+.1f}%)")
-        logger.info(f"Change explained by density: {explanation.get('explained_pct', 0):.1f}%")
+        logger.debug(f"Data density: {before_density['avg_points_per_interval']:.2f} -> {after_density['avg_points_per_interval']:.2f} points/interval ({explanation.get('density_change_pct', 0):+.1f}%)")
+        logger.debug(f"Change explained by density: {explanation.get('explained_pct', 0):.1f}%")
         
-        logger.info("Fixed-frequency data creation complete")
+        logger.debug("Fixed-frequency data creation complete")
         
         return df_fixed, fixed_freq_stats
 

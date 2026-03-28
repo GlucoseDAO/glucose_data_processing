@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from formats.base_converter import CSVFormatConverter
+from formats.glucose_bounds import dexcom_style_bounds
 
 MMOL_TO_MGDL: float = 18.018
 
@@ -100,13 +101,16 @@ class LoopConverter(CSVFormatConverter):
             if not glucose or glucose.strip() == "":
                 return None
             units = row.get("Units", "").strip().lower()
+            low_g, high_g = dexcom_style_bounds(None)
+            raw = glucose.strip()
             try:
-                glucose_float = float(glucose.strip())
-                if units == "mmol/l":
-                    glucose_float *= MMOL_TO_MGDL
-                result["glucose_value_mgdl"] = str(round(glucose_float, 3))
+                glucose_float = float(raw)
             except ValueError:
                 return None
+            if units == "mmol/l":
+                glucose_float *= MMOL_TO_MGDL
+            glucose_float = max(low_g, min(high_g, glucose_float))
+            result["glucose_value_mgdl"] = str(round(glucose_float, 3))
             result["event_type"] = "EGV"
         
         elif self.data_type == "basal":

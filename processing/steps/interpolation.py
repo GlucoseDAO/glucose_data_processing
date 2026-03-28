@@ -26,7 +26,7 @@ class ValueInterpolator:
         """
         seq_id_col = StandardFieldNames.SEQUENCE_ID
         if df.height == 0 or seq_id_col not in df.columns:
-            logger.info("Empty dataframe or missing sequence_id - skipping interpolation")
+            logger.debug("Empty dataframe or missing sequence_id - skipping interpolation")
             return df, {
                 'total_interpolations': 0,
                 'total_interpolated_data_points': 0,
@@ -62,7 +62,7 @@ class ValueInterpolator:
         fill_during_interp_fields = [f for f in field_categories_dict.get('fill_during_interpolation', []) if f in df.columns]
         
         if not fields_to_interpolate and not fill_during_interp_fields:
-            logger.info("No fields to interpolate or fill found - skipping interpolation")
+            logger.debug("No fields to interpolate or fill found - skipping interpolation")
             return df, {
                 'total_interpolations': 0,
                 'total_interpolated_data_points': 0,
@@ -72,9 +72,9 @@ class ValueInterpolator:
             }
         
         if fields_to_interpolate:
-            logger.info(f"Interpolating small gaps for continuous fields: {', '.join(fields_to_interpolate)}...")
+            logger.debug(f"Interpolating small gaps for continuous fields: {', '.join(fields_to_interpolate)}...")
         if fill_during_interp_fields:
-            logger.info(f"Filling constant values for fields: {', '.join(fill_during_interp_fields)}...")
+            logger.debug(f"Filling constant values for fields: {', '.join(fill_during_interp_fields)}...")
         
         field_safe_names: Dict[str, str] = {}
         field_stats_keys: Dict[str, str] = {}
@@ -414,16 +414,16 @@ class ValueInterpolator:
                 percentage = (count / total_rows) * 100
                 interpolation_stats[f'{stats_key}_interpolations_pct'] = round(percentage, 2)
         
-        logger.info(f"Identified and processed {interpolation_stats['small_gaps_filled']} small gaps")
-        logger.info(f"Created {interpolation_stats['total_interpolated_data_points']} interpolated (inserted) data points")
+        logger.debug(f"Identified and processed {interpolation_stats['small_gaps_filled']} small gaps")
+        logger.debug(f"Created {interpolation_stats['total_interpolated_data_points']} interpolated (inserted) data points")
         
         for field in fields_to_interpolate:
             count = interpolation_stats.get(f'{field_stats_keys[field]}_interpolations', 0)
             pct = interpolation_stats.get(f'{field_stats_keys[field]}_interpolations_pct', 0)
-            logger.info(f"Interpolated {field}: {count:,} ({pct}%)")
+            logger.debug(f"Interpolated {field}: {count:,} ({pct}%)")
             
-        logger.info(f"Skipped {interpolation_stats['large_gaps_skipped']} large gaps")
-        logger.info(f"Processed {interpolation_stats['sequences_processed']} sequences")
+        logger.debug(f"Skipped {interpolation_stats['large_gaps_skipped']} large gaps")
+        logger.debug(f"Processed {interpolation_stats['sequences_processed']} sequences")
         
         return df, interpolation_stats
 

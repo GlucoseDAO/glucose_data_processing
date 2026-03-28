@@ -41,6 +41,12 @@ field_to_display_name_map:
   fast_acting_insulin_u: "Bolus Insulin (U)"
   carb_grams: "Carbohydrates (g)"
 
+# Same numeric bounds as Dexcom config: clip Loop CGM/BGM (mg/dL) into [low, high].
+# Loop source files use numeric values only, not Dexcom-style "High"/"Low" strings.
+dexcom:
+  high_glucose_value: 401
+  low_glucose_value: 39
+
 # Database-specific configurations
 loop:
   # Multi-user database — all users in shared pipe-separated files

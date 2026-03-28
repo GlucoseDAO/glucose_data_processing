@@ -22,6 +22,7 @@ import duckdb
 from loguru import logger
 
 from formats.database_converters import DatabaseConverter
+from formats.glucose_bounds import dexcom_style_bounds
 
 MMOL_TO_MGDL: float = 18.018
 CACHE_DIR_NAME: str = ".loop_cache"
@@ -120,9 +121,32 @@ class LoopDatabaseConverter(DatabaseConverter):
                 continue
 
             user_df = self._enforce_output_schema(user_df.lazy()).collect()
+            user_df = self._apply_glucose_trim_to_frame(user_df)
             if len(user_df) > 0:
                 logger.info(f"  User {user_id}: {len(user_df)} records")
                 yield user_df
+
+    # ------------------------------------------------------------------
+    # Glucose clip: same dexcom config keys (low/high mg/dL) as Dexcom; Loop values are numeric only
+    # ------------------------------------------------------------------
+
+    def _apply_glucose_trim_to_frame(self, df: pl.DataFrame) -> pl.DataFrame:
+        """
+        Clip numeric CGM/BGM glucose to [low_glucose_value, high_glucose_value] (Dexcom
+        config keys). Loop data are numeric only; idempotent if SQL already clipped.
+        """
+        if "glucose_value_mgdl" not in df.columns or "event_type" not in df.columns:
+            return df
+
+        low_g, high_g = dexcom_style_bounds(self.config)
+        ev = pl.col("event_type")
+        g = pl.col("glucose_value_mgdl")
+        is_glucose_event = ev.is_in(["EGV", "BGM"])
+        g_num = g.cast(pl.Float64, strict=False)
+        trimmed = pl.when(g_num.is_not_null()).then(g_num.clip(low_g, high_g)).otherwise(None)
+        out_col = pl.when(is_glucose_event).then(trimmed).otherwise(g).cast(pl.Float64, strict=False)
+
+        return df.with_columns(out_col.alias("glucose_value_mgdl"))
 
     # ------------------------------------------------------------------
     # Cache management
@@ -153,6 +177,9 @@ class LoopDatabaseConverter(DatabaseConverter):
             f"{len(basal_files)} Basal, {len(bolus_files)} Bolus, {len(food_files)} Food"
         )
 
+        low_g, high_g = dexcom_style_bounds(self.config)
+        logger.info(f"Loop glucose clip: numeric CGM/BGM to [{low_g:g}, {high_g:g}] mg/dL")
+
         # Each modality definition: (name, source_files, duckdb_select_sql)
         # The SELECT must produce columns: user_id, timestamp (TIMESTAMP), event_type,
         # and any modality-specific value columns.
@@ -166,16 +193,20 @@ class LoopDatabaseConverter(DatabaseConverter):
                     CAST(PtID AS VARCHAR) AS user_id,
                     TRY_CAST(UTCDtTm AS TIMESTAMP) AS timestamp,
                     'EGV' AS event_type,
-                    CASE WHEN lower(Units) = 'mmol/l'
-                         THEN TRY_CAST(CGMVal AS DOUBLE) * {mmol}
-                         ELSE TRY_CAST(CGMVal AS DOUBLE)
+                    CASE
+                        WHEN TRY_CAST(CGMVal AS DOUBLE) IS NULL THEN NULL
+                        WHEN lower(Units) = 'mmol/l'
+                            THEN least({high}, greatest({low},
+                                TRY_CAST(CGMVal AS DOUBLE) * {mmol}))
+                        ELSE least({high}, greatest({low},
+                            TRY_CAST(CGMVal AS DOUBLE)))
                     END AS glucose_value_mgdl
                 FROM read_csv({{files}}, delim='|', header=true, ignore_errors=true,
                               null_padding=true, strict_mode=false)
                 WHERE PtID IS NOT NULL
                   AND TRY_CAST(UTCDtTm AS TIMESTAMP) IS NOT NULL
                 ORDER BY user_id, timestamp
-                """.format(mmol=MMOL_TO_MGDL),
+                """.format(mmol=MMOL_TO_MGDL, low=low_g, high=high_g),
             ))
 
         if bgm_files:
@@ -186,16 +217,20 @@ class LoopDatabaseConverter(DatabaseConverter):
                     CAST(PtID AS VARCHAR) AS user_id,
                     TRY_CAST(UTCDtTm AS TIMESTAMP) AS timestamp,
                     'BGM' AS event_type,
-                    CASE WHEN lower(Units) = 'mmol/l'
-                         THEN TRY_CAST(BGMVal AS DOUBLE) * {mmol}
-                         ELSE TRY_CAST(BGMVal AS DOUBLE)
+                    CASE
+                        WHEN TRY_CAST(BGMVal AS DOUBLE) IS NULL THEN NULL
+                        WHEN lower(Units) = 'mmol/l'
+                            THEN least({high}, greatest({low},
+                                TRY_CAST(BGMVal AS DOUBLE) * {mmol}))
+                        ELSE least({high}, greatest({low},
+                            TRY_CAST(BGMVal AS DOUBLE)))
                     END AS glucose_value_mgdl
                 FROM read_csv({{files}}, delim='|', header=true, ignore_errors=true,
                               null_padding=true, strict_mode=false)
                 WHERE PtID IS NOT NULL
                   AND TRY_CAST(UTCDtTm AS TIMESTAMP) IS NOT NULL
                 ORDER BY user_id, timestamp
-                """.format(mmol=MMOL_TO_MGDL),
+                """.format(mmol=MMOL_TO_MGDL, low=low_g, high=high_g),
             ))
 
         if basal_files:

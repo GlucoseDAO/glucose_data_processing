@@ -22,7 +22,7 @@ import json
 import concurrent.futures
 import os
 import contextlib
-import multiprocessing
+import threading
 
 # Import database detection and conversion classes
 from formats import DatabaseDetector
@@ -46,23 +46,6 @@ DEFAULT_STREAMING_MAX_BUFFER_MB = 256
 DEFAULT_STREAMING_FLUSH_MAX_USERS = 10
 MIN_BUFFER_MB = 32
 
-_worker_lock = None
-
-def _init_worker_process(params: Dict[str, Any]) -> None:
-    """Initialize worker process: configure logging and shared state."""
-    verbose = params.get('verbose', False)
-    config = params.get('config')
-    
-    global _worker_lock
-    _worker_lock = params.get('lock')
-    
-    # Configure loguru to show only the message, matching the CLI behavior
-    logger.remove()
-    if verbose:
-        logger.add(sys.stdout, format="{message}")
-    
-    if config:
-        CSVFormatConverter.initialize_from_config(config)
 
 def _run_processing_pipeline(
     df: pl.DataFrame,
@@ -81,7 +64,8 @@ def _run_processing_pipeline(
     save_intermediate: bool = False,
     output_dir: Optional[Path] = None,
     output_prefix: Optional[str] = None,
-    expected_standard_cols: Optional[List[str]] = None
+    expected_standard_cols: Optional[List[str]] = None,
+    lock: Optional[Any] = None,
 ) -> Tuple[pl.DataFrame, Dict[str, Any], int]:
     """
     Common processing pipeline used by both sequential and parallel processing modes.
@@ -123,9 +107,8 @@ def _run_processing_pipeline(
             available_expected = [c for c in expected_standard_cols if c in current_df.columns]
             current_df = current_df.select(available_expected)
         
-        # Use a global lock if available to prevent interleaved writes from multiple processes
-        global _worker_lock
-        lock_ctx = _worker_lock if _worker_lock is not None else contextlib.nullcontext()
+        # Use the provided lock (if any) to prevent interleaved writes from multiple threads
+        lock_ctx = lock if lock is not None else contextlib.nullcontext()
         
         with lock_ctx:
             # When accumulating, we only write header if the file is new
@@ -279,7 +262,8 @@ def _process_user_frame_task(
         save_intermediate=save_intermediate_files,
         output_dir=params.get('output_dir'),
         output_prefix=params.get('output_prefix'),
-        expected_standard_cols=expected_standard_cols
+        expected_standard_cols=expected_standard_cols,
+        lock=params.get('lock'),
     )
     
     # We return the max sequence ID from gap detection to maintain parity with sequential processing
@@ -562,11 +546,10 @@ class GlucoseMLPreprocessor:
         seq_id_col = StandardFieldNames.SEQUENCE_ID
 
         # Prepare for intermediate file saving if enabled
+        # Use threading.Lock() — ThreadPoolExecutor shares memory, no IPC needed
         lock = None
         if self.save_intermediate_files and output_file:
-            # Use Manager().Lock() for ProcessPoolExecutor compatibility on all platforms
-            manager = multiprocessing.Manager()
-            lock = manager.Lock()
+            lock = threading.Lock()
             # Clear existing intermediate files to start fresh for accumulation if not appending
             if not append:
                 self._clear_intermediate_files(output_file)
@@ -662,13 +645,11 @@ class GlucoseMLPreprocessor:
             if buffered_bytes >= max_bytes or buffered_users >= max_users:
                 flush()
 
-        # Use ProcessPoolExecutor for parallel processing of users
+        # Use ThreadPoolExecutor: threads share memory — no IPC pipes, no pickling,
+        # no Windows non-paged pool exhaustion. Polars releases the GIL so threads
+        # run in parallel for Polars-heavy steps.
         max_workers = os.cpu_count() or 1
-        with concurrent.futures.ProcessPoolExecutor(
-            max_workers=max_workers,
-            initializer=_init_worker_process,
-            initargs=(params,)
-        ) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             max_active_tasks = max_workers
             futures = []
             
