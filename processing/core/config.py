@@ -92,8 +92,9 @@ def extract_field_categories(database_type: str) -> Dict[str, Any]:
         'occasional_avg': [],
         'occasional_sum': [],
         'service': [],
+        'mask': [],
         'remove_after_calibration': schema.get('remove_after_calibration', True),
-        'fill_during_interpolation': schema.get('fill_during_interpolation', [])
+        'fill_during_interpolation': list(schema.get('fill_during_interpolation', []))
     }
     
     for standard_name, category in field_categories.items():
@@ -110,6 +111,16 @@ def extract_field_categories(database_type: str) -> Dict[str, Any]:
     glucose_col = StandardFieldNames.GLUCOSE_VALUE
     if glucose_col not in result['continuous']:
         result['continuous'].append(glucose_col)
-    
+
+    # Deduplicate all list values (schema may define a field in both field_categories
+    # and the top-level fill_during_interpolation list).
+    for key in ('continuous', 'occasional', 'occasional_avg', 'occasional_sum',
+                'service', 'mask', 'fill_during_interpolation'):
+        seen: list[str] = []
+        for v in result[key]:
+            if v not in seen:
+                seen.append(v)
+        result[key] = seen
+
     return result
 

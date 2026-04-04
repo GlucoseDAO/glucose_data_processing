@@ -27,7 +27,7 @@ class MLDataPreparer:
         """
         Dynamically casts all fields and renames them to display names.
         """
-        logger.info(f"Preparing final ML dataset (rounding precision: {self.round_precision})...")
+        logger.debug(f"Preparing final ML dataset (rounding precision: {self.round_precision})...")
         
         ts_col = StandardFieldNames.TIMESTAMP
         seq_id_col = StandardFieldNames.SEQUENCE_ID

@@ -12,6 +12,7 @@ import polars as pl
 from loguru import logger
 
 from formats.database_converters import MonoUserDatabaseConverter
+from formats.glucose_bounds import dexcom_style_bounds
 
 
 class DexcomDatabaseConverter(MonoUserDatabaseConverter):
@@ -27,10 +28,8 @@ class DexcomDatabaseConverter(MonoUserDatabaseConverter):
         Returns:
             Processed DataFrame
         """
-        # Get Dexcom-specific config
         dexcom_config: Dict[str, Any] = self.config.get("dexcom", {})
-        high_value = dexcom_config.get("high_glucose_value", 401)
-        low_value = dexcom_config.get("low_glucose_value", 39)
+        low_value, high_value = dexcom_style_bounds(self.config)
         remove_calibration = dexcom_config.get("remove_calibration", True)
 
         # Step 1: Replace High/Low glucose values

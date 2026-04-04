@@ -22,7 +22,7 @@ import json
 import concurrent.futures
 import os
 import contextlib
-import multiprocessing
+import threading
 
 # Import database detection and conversion classes
 from formats import DatabaseDetector
@@ -37,7 +37,7 @@ from processing.steps.interpolation import ValueInterpolator
 from processing.steps.filtering import SequenceFilter
 from processing.steps.fixed_frequency import FixedFreqGenerator
 from processing.steps.ml_prep import MLDataPreparer
-from processing.stats_manager import StatsManager
+from processing.stats_manager import StatsManager, print_statistics
 
 warnings.filterwarnings('ignore')
 
@@ -46,23 +46,6 @@ DEFAULT_STREAMING_MAX_BUFFER_MB = 256
 DEFAULT_STREAMING_FLUSH_MAX_USERS = 10
 MIN_BUFFER_MB = 32
 
-_worker_lock = None
-
-def _init_worker_process(params: Dict[str, Any]) -> None:
-    """Initialize worker process: configure logging and shared state."""
-    verbose = params.get('verbose', False)
-    config = params.get('config')
-    
-    global _worker_lock
-    _worker_lock = params.get('lock')
-    
-    # Configure loguru to show only the message, matching the CLI behavior
-    logger.remove()
-    if verbose:
-        logger.add(sys.stdout, format="{message}")
-    
-    if config:
-        CSVFormatConverter.initialize_from_config(config)
 
 def _run_processing_pipeline(
     df: pl.DataFrame,
@@ -81,7 +64,8 @@ def _run_processing_pipeline(
     save_intermediate: bool = False,
     output_dir: Optional[Path] = None,
     output_prefix: Optional[str] = None,
-    expected_standard_cols: Optional[List[str]] = None
+    expected_standard_cols: Optional[List[str]] = None,
+    lock: Optional[Any] = None,
 ) -> Tuple[pl.DataFrame, Dict[str, Any], int]:
     """
     Common processing pipeline used by both sequential and parallel processing modes.
@@ -123,9 +107,8 @@ def _run_processing_pipeline(
             available_expected = [c for c in expected_standard_cols if c in current_df.columns]
             current_df = current_df.select(available_expected)
         
-        # Use a global lock if available to prevent interleaved writes from multiple processes
-        global _worker_lock
-        lock_ctx = _worker_lock if _worker_lock is not None else contextlib.nullcontext()
+        # Use the provided lock (if any) to prevent interleaved writes from multiple threads
+        lock_ctx = lock if lock is not None else contextlib.nullcontext()
         
         with lock_ctx:
             # When accumulating, we only write header if the file is new
@@ -190,6 +173,25 @@ def _run_processing_pipeline(
         if log_steps:
             logger.info("STEP 6: Creating fixed-frequency data...")
         df, fixed_freq_stats = fixed_freq_generator.create_fixed_frequency_data(df, field_categories_dict)
+        
+        # Propagate service fields after grid step
+        if StandardFieldNames.USER_ID in df.columns and StandardFieldNames.SEQUENCE_ID in df.columns:
+            df = df.with_columns(
+                pl.col(StandardFieldNames.USER_ID).forward_fill().backward_fill().over(StandardFieldNames.SEQUENCE_ID)
+            )
+        if StandardFieldNames.EVENT_TYPE in df.columns and StandardFieldNames.SEQUENCE_ID in df.columns:
+            df = df.with_columns(
+                pl.col(StandardFieldNames.EVENT_TYPE).fill_null('Interpolated')
+            )
+            
+        # Clean up observation masks
+        mask_cols = [c for c in df.columns if c.endswith('_observed')]
+        if mask_cols:
+            df = df.with_columns([
+                pl.when(pl.col(c) > 0).then(1.0).otherwise(0.0).alias(c)
+                for c in mask_cols
+            ])
+            
         _save_intermediate(df, 6)
     if last_step == 6:
         return early_exit(df, cleaning_stats, gap_stats, interp_stats, filter_stats, fixed_freq_stats, glucose_filter_stats, last_sequence_id)
@@ -197,6 +199,7 @@ def _run_processing_pipeline(
     # STEP 7: Filtering to glucose-only data
     if log_steps:
         logger.info("STEP 7: Filtering to glucose-only data...")
+        
     df, glucose_filter_stats = filter_step.filter_glucose_only(df)
     if filter_step.glucose_only:
         _save_intermediate(df, 7)
@@ -259,7 +262,8 @@ def _process_user_frame_task(
         save_intermediate=save_intermediate_files,
         output_dir=params.get('output_dir'),
         output_prefix=params.get('output_prefix'),
-        expected_standard_cols=expected_standard_cols
+        expected_standard_cols=expected_standard_cols,
+        lock=params.get('lock'),
     )
     
     # We return the max sequence ID from gap detection to maintain parity with sequential processing
@@ -542,11 +546,10 @@ class GlucoseMLPreprocessor:
         seq_id_col = StandardFieldNames.SEQUENCE_ID
 
         # Prepare for intermediate file saving if enabled
+        # Use threading.Lock() — ThreadPoolExecutor shares memory, no IPC needed
         lock = None
         if self.save_intermediate_files and output_file:
-            # Use Manager().Lock() for ProcessPoolExecutor compatibility on all platforms
-            manager = multiprocessing.Manager()
-            lock = manager.Lock()
+            lock = threading.Lock()
             # Clear existing intermediate files to start fresh for accumulation if not appending
             if not append:
                 self._clear_intermediate_files(output_file)
@@ -642,14 +645,12 @@ class GlucoseMLPreprocessor:
             if buffered_bytes >= max_bytes or buffered_users >= max_users:
                 flush()
 
-        # Use ProcessPoolExecutor for parallel processing of users
+        # Use ThreadPoolExecutor: threads share memory — no IPC pipes, no pickling,
+        # no Windows non-paged pool exhaustion. Polars releases the GIL so threads
+        # run in parallel for Polars-heavy steps.
         max_workers = os.cpu_count() or 1
-        with concurrent.futures.ProcessPoolExecutor(
-            max_workers=max_workers,
-            initializer=_init_worker_process,
-            initargs=(params,)
-        ) as executor:
-            max_active_tasks = max_workers * 2
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            max_active_tasks = max_workers
             futures = []
             
             typed_iter_fn = cast(Iterable[pl.DataFrame], iter_fn(data_folder, interval_minutes=self.expected_interval_minutes))
@@ -770,7 +771,7 @@ class GlucoseMLPreprocessor:
             and database_converter is not None
             and callable(getattr(database_converter, "iter_user_event_frames", None))
         ):
-            return self._process_streaming_from_converter(
+            ml_df, stats, last_sequence_id = self._process_streaming_from_converter(
                 data_folder=csv_folder,
                 database_type=database_type,
                 output_file=output_file,
@@ -780,57 +781,55 @@ class GlucoseMLPreprocessor:
                 dataset_name=dataset_name,
                 quiet=quiet
             )
-        
-        if not quiet:
-            logger.info("STEP 1: Consolidating CSV files (mandatory step)...")
-        df = self.consolidate_glucose_data(csv_folder)
-        
-        # Use common processing pipeline for steps 2-8 (handles last_step internally)
-        expected_standard_cols = self._compute_expected_output_columns([database_type], use_display_names=False)
-        
-        ml_df, stats, last_sequence_id = _run_processing_pipeline(
-            df, last_sequence_id, field_categories_dict,
-            self.gap_detector, self.data_cleaner, self.interpolator, self.filter_step, self.fixed_freq_generator, self.ml_preparer, self.stats_manager,
-            self.create_fixed_frequency,
-            log_steps=not quiet,
-            last_step=self.last_step,
-            save_intermediate=self.save_intermediate_files,
-            output_dir=output_file.parent if output_file else Path("OUTPUT"),
-            output_prefix=output_file.stem if output_file else "processed",
-            expected_standard_cols=expected_standard_cols
-        )
-        
-        # Add dataset name if provided
-        if dataset_name:
-            dataset_name_display = CSVFormatConverter.get_display_name(StandardFieldNames.DATASET_NAME)
-            ml_df = ml_df.with_columns(pl.lit(dataset_name).alias(dataset_name_display))
-
-        if output_file:
-            # When appending, we only write header if the file is empty or doesn't exist
-            include_header = not (append and output_file.exists() and output_file.stat().st_size > 0)
-            mode = "a" if append else "w"
-            
-            # Polars write_csv doesn't support mode="a" directly for path, need to open file
-            if append:
-                with open(output_file, "ab") as f:
-                    ml_df.write_csv(f, include_header=include_header)
-            else:
-                ml_df.write_csv(output_file)
-            
+        else:
             if not quiet:
-                logger.info(f"Final processed data saved to: {output_file}")
+                logger.info("STEP 1: Consolidating CSV files (mandatory step)...")
+            df = self.consolidate_glucose_data(csv_folder)
             
-            # Save statistics to file if not appending (if appending, higher level will handle it)
-            if not append:
-                from processing.stats_manager import print_statistics
-                stats_str = print_statistics(stats, preprocessor_params={
-                    'expected_interval_minutes': self.expected_interval_minutes,
-                    'small_gap_max_minutes': self.small_gap_max_minutes,
-                    'min_sequence_len': self.min_sequence_len,
-                    'glucose_only': self.glucose_only,
-                    'create_fixed_frequency': self.create_fixed_frequency
-                })
-                self._save_stats_to_file(stats_str, output_file)
+            # Use common processing pipeline for steps 2-8 (handles last_step internally)
+            expected_standard_cols = self._compute_expected_output_columns([database_type], use_display_names=False)
+            
+            ml_df, stats, last_sequence_id = _run_processing_pipeline(
+                df, last_sequence_id, field_categories_dict,
+                self.gap_detector, self.data_cleaner, self.interpolator, self.filter_step, self.fixed_freq_generator, self.ml_preparer, self.stats_manager,
+                self.create_fixed_frequency,
+                log_steps=not quiet,
+                last_step=self.last_step,
+                save_intermediate=self.save_intermediate_files,
+                output_dir=output_file.parent if output_file else Path("OUTPUT"),
+                output_prefix=output_file.stem if output_file else "processed",
+                expected_standard_cols=expected_standard_cols
+            )
+            
+            # Add dataset name if provided
+            if dataset_name:
+                dataset_name_display = CSVFormatConverter.get_display_name(StandardFieldNames.DATASET_NAME)
+                ml_df = ml_df.with_columns(pl.lit(dataset_name).alias(dataset_name_display))
+
+            if output_file:
+                # When appending, we only write header if the file is empty or doesn't exist
+                include_header = not (append and output_file.exists() and output_file.stat().st_size > 0)
+                
+                # Polars write_csv doesn't support mode="a" directly for path, need to open file
+                if append:
+                    with open(output_file, "ab") as f:
+                        ml_df.write_csv(f, include_header=include_header)
+                else:
+                    ml_df.write_csv(output_file)
+                
+                if not quiet:
+                    logger.info(f"Final processed data saved to: {output_file}")
+            
+        # Save statistics to file if not appending (if appending, higher level will handle it)
+        if output_file and not append:
+            stats_str = print_statistics(stats, preprocessor_params={
+                'expected_interval_minutes': self.expected_interval_minutes,
+                'small_gap_max_minutes': self.small_gap_max_minutes,
+                'min_sequence_len': self.min_sequence_len,
+                'glucose_only': self.glucose_only,
+                'create_fixed_frequency': self.create_fixed_frequency
+            })
+            self._save_stats_to_file(stats_str, output_file)
         
         # Add database info to stats for better aggregation later
         stats['database_info'] = {

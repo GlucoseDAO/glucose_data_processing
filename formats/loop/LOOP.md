@@ -52,3 +52,8 @@ These are converted to standard ISO format: `%Y-%m-%dT%H:%M:%S`.
 
 2. **Pipe Delimiter**:
    - The files use `|` as the delimiter, which is handled by the `LoopConverter`.
+
+3. **Glucose bounds (same numeric limits as Dexcom config)**:
+   - CGM and BGM values are **numeric** in Loop exports; they are clipped to `[low_glucose_value, high_glucose_value]` (defaults `39`–`401` mg/dL), matching Dexcom’s substituted min/max mg/dL.
+   - Configure under `dexcom:` in the YAML (see `glucose_config_loop.yaml`).
+   - Applied in DuckDB when building cache and again in Polars per user (idempotent).

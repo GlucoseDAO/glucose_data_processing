@@ -20,7 +20,7 @@ class SequenceFilter:
         """
         seq_id_col = StandardFieldNames.SEQUENCE_ID
         if df.height == 0 or seq_id_col not in df.columns:
-            logger.info("Empty dataframe or missing sequence_id - skipping sequence filtering")
+            logger.debug("Empty dataframe or missing sequence_id - skipping sequence filtering")
             return df, {
                 'original_sequences': 0,
                 'filtered_sequences': 0,
@@ -30,7 +30,7 @@ class SequenceFilter:
                 'removed_records': 0
             }
 
-        logger.info(f"Filtering sequences with length < {self.min_sequence_len}...")
+        logger.debug(f"Filtering sequences with length < {self.min_sequence_len}...")
         
         seq_id_col = StandardFieldNames.SEQUENCE_ID
 
@@ -47,7 +47,7 @@ class SequenceFilter:
         }
         
         if len(sequences_to_keep) == 0:
-            logger.info("Warning: No sequences meet the minimum length requirement!")
+            logger.debug("Warning: No sequences meet the minimum length requirement!")
             return df.clear(), filtering_stats
         
         # Optimized: Use window function for filtering instead of to_list() and is_in()
@@ -58,12 +58,12 @@ class SequenceFilter:
         filtering_stats['filtered_records'] = len(filtered_df)
         filtering_stats['removed_records'] = len(df) - len(filtered_df)
         
-        logger.info(f"Original sequences: {filtering_stats['original_sequences']}")
-        logger.info(f"Sequences after filtering: {filtering_stats['filtered_sequences']}")
-        logger.info(f"Sequences removed: {filtering_stats['removed_sequences']}")
-        logger.info(f"Original records: {filtering_stats['original_records']:,}")
-        logger.info(f"Records after filtering: {filtering_stats['filtered_records']:,}")
-        logger.info(f"Records removed: {filtering_stats['removed_records']:,}")
+        logger.debug(f"Original sequences: {filtering_stats['original_sequences']}")
+        logger.debug(f"Sequences after filtering: {filtering_stats['filtered_sequences']}")
+        logger.debug(f"Sequences removed: {filtering_stats['removed_sequences']}")
+        logger.debug(f"Original records: {filtering_stats['original_records']:,}")
+        logger.debug(f"Records after filtering: {filtering_stats['filtered_records']:,}")
+        logger.debug(f"Records removed: {filtering_stats['removed_records']:,}")
         
         if filtering_stats['removed_sequences'] > 0:
             removed_sequences = sequence_counts.filter(pl.col('len') < self.min_sequence_len)
@@ -71,7 +71,7 @@ class SequenceFilter:
                 min_len_removed = removed_sequences['len'].min()
                 max_len_removed = removed_sequences['len'].max()
                 avg_len_removed = removed_sequences['len'].mean()
-                logger.info(f"Removed sequence lengths - Min: {min_len_removed}, Max: {max_len_removed}, Avg: {avg_len_removed:.1f}")
+                logger.debug(f"Removed sequence lengths - Min: {min_len_removed}, Max: {max_len_removed}, Avg: {avg_len_removed:.1f}")
         
         return filtered_df, filtering_stats
 
@@ -80,7 +80,7 @@ class SequenceFilter:
         Keep only rows with non-null glucose values and remove other event fields.
         """
         if df.height == 0:
-            logger.info("Empty dataframe - skipping glucose-only filtering")
+            logger.debug("Empty dataframe - skipping glucose-only filtering")
             return df, {
                 'original_records': 0,
                 'glucose_only_enabled': self.glucose_only,
@@ -89,7 +89,7 @@ class SequenceFilter:
                 'fields_removed': []
             }
 
-        logger.info("Filtering to glucose-only data...")
+        logger.debug("Filtering to glucose-only data...")
         
         glucose_col = StandardFieldNames.GLUCOSE_VALUE
         event_type_col = StandardFieldNames.EVENT_TYPE
@@ -106,7 +106,7 @@ class SequenceFilter:
         }
         
         if not self.glucose_only:
-            logger.info("Glucose-only filtering is disabled - keeping all data")
+            logger.debug("Glucose-only filtering is disabled - keeping all data")
             filtering_stats['records_after_filtering'] = len(df)
             return df, filtering_stats
         
@@ -122,12 +122,12 @@ class SequenceFilter:
         filtering_stats['records_after_filtering'] = len(df_filtered)
         filtering_stats['records_removed'] = len(df) - len(df_filtered)
         
-        logger.info(f"Original records: {filtering_stats['original_records']:,}")
-        logger.info(f"Records with glucose values: {filtering_stats['records_after_filtering']:,}")
-        logger.info(f"Records removed (no glucose): {filtering_stats['records_removed']:,}")
+        logger.debug(f"Original records: {filtering_stats['original_records']:,}")
+        logger.debug(f"Records with glucose values: {filtering_stats['records_after_filtering']:,}")
+        logger.debug(f"Records removed (no glucose): {filtering_stats['records_removed']:,}")
         if filtering_stats['fields_removed']:
-            logger.info(f"Fields removed: {', '.join(filtering_stats['fields_removed'])}")
-        logger.info("OK: Glucose-only filtering complete")
+            logger.debug(f"Fields removed: {', '.join(filtering_stats['fields_removed'])}")
+        logger.debug("OK: Glucose-only filtering complete")
         
         return df_filtered, filtering_stats
 

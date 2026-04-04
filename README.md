@@ -92,19 +92,22 @@ Use the built-in download tool to fetch publicly available datasets:
 
 ```bash
 # List all available datasets for download
-uv run python download.py list
+glucose-download list
 
 # Download a specific dataset by name
-uv run python download.py by-name "HUPA"
+glucose-download by-name "HUPA"
+
+# Download multiple datasets by name
+glucose-download by-names "HUPA" "T1D-UOM"
 
 # Download a specific dataset by ID
-uv run python download.py by-id 14
+glucose-download by-id 14
 
 # Download all programmatically accessible datasets
-uv run python download.py all
+glucose-download all
 
 # Force redownload even if exists
-uv run python download.py by-name "T1D-UOM" --force
+glucose-download by-name "T1D-UOM" --force
 ```
 
 Downloaded datasets are saved to the `DATA/` folder with folder names matching their format converters (e.g., `DATA/hupa/`, `DATA/uom/`).
@@ -185,9 +188,8 @@ glucose-compare checkpoint1.csv checkpoint2.csv
    - `-o <output>`: (Optional) Custom output filename. If not provided, filename is resolved based on config or database type.
    - **Output location**: All output files are automatically saved to the `OUTPUT/` folder in the project root.
    - **Automatic naming**: When `-o` is not specified, the output filename is resolved using the following priority:
-     1. Configuration file `output_file` setting (e.g., `OUTPUT/processed_dataset.csv`).
-     2. Database schema identifier (e.g., `OUTPUT/uom.csv`) if processing a single source.
-     3. Generic default: `OUTPUT/processed_dataset.csv`.
+     1. Configuration file `output_file` setting.
+     2. Folder-name-based: input folder/ZIP names joined with underscores and suffixed with `_ml_ready.csv` (e.g., `OUTPUT/uom_ml_ready.csv`).
    - The command automatically detects the database format (UoM, Dexcom, AI-READY, Libre3) and applies the appropriate conversion.
    - Multiple input paths can be provided to combine datasets from different sources.
 
@@ -208,7 +210,7 @@ Installed X packages in Yms
 ```
 Processing completed successfully!
 Output: X,XXX records in XX sequences
-Saved to: OUTPUT/uom.csv
+Saved to: OUTPUT/uom_ml_ready.csv
 
 Summary:
    Date range: YYYY-MM-DD to YYYY-MM-DD

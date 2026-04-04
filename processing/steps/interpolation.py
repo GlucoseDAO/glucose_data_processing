@@ -26,7 +26,7 @@ class ValueInterpolator:
         """
         seq_id_col = StandardFieldNames.SEQUENCE_ID
         if df.height == 0 or seq_id_col not in df.columns:
-            logger.info("Empty dataframe or missing sequence_id - skipping interpolation")
+            logger.debug("Empty dataframe or missing sequence_id - skipping interpolation")
             return df, {
                 'total_interpolations': 0,
                 'total_interpolated_data_points': 0,
@@ -51,11 +51,18 @@ class ValueInterpolator:
         if glucose_col in df.columns and glucose_col not in continuous_fields:
             continuous_fields.append(glucose_col)
         
-        fields_to_interpolate = [f for f in continuous_fields if f in df.columns]
+        # Only interpolate numeric fields — string/categorical fields cannot be linearly
+        # interpolated and will crash Polars' .interpolate().over() with a length mismatch.
+        numeric_dtypes = {pl.Float32, pl.Float64, pl.Int8, pl.Int16, pl.Int32, pl.Int64,
+                          pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64}
+        fields_to_interpolate = [
+            f for f in continuous_fields
+            if f in df.columns and df[f].dtype in numeric_dtypes
+        ]
         fill_during_interp_fields = [f for f in field_categories_dict.get('fill_during_interpolation', []) if f in df.columns]
         
         if not fields_to_interpolate and not fill_during_interp_fields:
-            logger.info("No fields to interpolate or fill found - skipping interpolation")
+            logger.debug("No fields to interpolate or fill found - skipping interpolation")
             return df, {
                 'total_interpolations': 0,
                 'total_interpolated_data_points': 0,
@@ -65,9 +72,9 @@ class ValueInterpolator:
             }
         
         if fields_to_interpolate:
-            logger.info(f"Interpolating small gaps for continuous fields: {', '.join(fields_to_interpolate)}...")
+            logger.debug(f"Interpolating small gaps for continuous fields: {', '.join(fields_to_interpolate)}...")
         if fill_during_interp_fields:
-            logger.info(f"Filling constant values for fields: {', '.join(fill_during_interp_fields)}...")
+            logger.debug(f"Filling constant values for fields: {', '.join(fill_during_interp_fields)}...")
         
         field_safe_names: Dict[str, str] = {}
         field_stats_keys: Dict[str, str] = {}
@@ -90,56 +97,83 @@ class ValueInterpolator:
         interpolation_stats['sequences_processed'] = df[seq_id_col].n_unique()
         per_field_interpolations = {field: 0 for field in fields_to_interpolate}
         
-        # Step 0: Fill fields that should be constant during interpolation if values on both sides match
-        for field in fill_during_interp_fields:
-            # Fill nulls if value before and after are the same within a small gap
-            ts_at_non_null = pl.when(pl.col(field).is_not_null()).then(pl.col(ts_col)).otherwise(None)
-            gap_size = (
-                ts_at_non_null.backward_fill().over(seq_id_col) - 
-                ts_at_non_null.forward_fill().over(seq_id_col)
-            ).dt.total_seconds()
-            is_small_gap = (gap_size > 0) & (gap_size <= self.small_gap_max_seconds)
-            
-            v_prev = pl.col(field).forward_fill().over(seq_id_col)
-            v_next = pl.col(field).backward_fill().over(seq_id_col)
-            
-            # We fill only if v_prev == v_next and they are NOT null
-            df = df.with_columns(
-                pl.when(pl.col(field).is_null() & is_small_gap & (v_prev == v_next) & v_prev.is_not_null())
-                .then(v_prev)
-                .otherwise(pl.col(field))
-                .alias(field)
-            )
+        # Step 0: Fill fields that should be constant during interpolation if values on both sides match.
+        # We avoid .over() here because Polars 1.x has a known length-mismatch bug with
+        # forward_fill().over() / backward_fill().over() on certain data distributions.
+        # Instead we sort + partition_by and process each sequence group independently.
+        if fill_during_interp_fields:
+            df = df.sort([seq_id_col, ts_col])
+            parts = df.partition_by(seq_id_col, maintain_order=True)
+            filled_parts: List[pl.DataFrame] = []
+            for part in parts:
+                for field in fill_during_interp_fields:
+                    if field not in part.columns:
+                        continue
+                    fwd = part[field].forward_fill()
+                    bwd = part[field].backward_fill()
+                    # Only fill where current is null AND neighbors agree AND are non-null
+                    gap_mask = part[field].is_null() & fwd.is_not_null() & (fwd == bwd)
+                    new_vals = pl.when(gap_mask).then(fwd).otherwise(part[field])
+                    part = part.with_columns(new_vals.alias(field))
+                filled_parts.append(part)
+            df = pl.concat(filled_parts, how="vertical_relaxed")
 
-        # Step 1: For each continuous field, fill missing values at existing timestamps
-        # This fills nulls in continuous fields where other modalities might have data
+        # Step 1: For each continuous field, fill missing values at existing timestamps.
+        # Frame is already sorted by (seq_id, timestamp) from Step 0 (or the initial sort below).
+        # We ensure sorting here in case fill_during_interp_fields was empty.
+        if not fill_during_interp_fields:
+            df = df.sort([seq_id_col, ts_col])
+
         for field in fields_to_interpolate:
-            # Vectorized interpolation restricted by gap size
-            ts_at_non_null = pl.when(pl.col(field).is_not_null()).then(pl.col(ts_col)).otherwise(None)
-            
-            # Calculate gap size for each null point by looking at nearest non-null neighbors
+            # Calculate gap size for each null point by looking at nearest non-null neighbors.
+            # Use forward_fill/backward_fill within each sequence via partition_by to avoid
+            # Polars 1.x over() length-mismatch bug.
+            ts_fwd_col = f'_ts_fwd_{field}'
+            ts_bwd_col = f'_ts_bwd_{field}'
+            parts = df.with_columns([
+                pl.when(pl.col(field).is_not_null()).then(pl.col(ts_col)).otherwise(None).alias('_ts_nn')
+            ]).partition_by(seq_id_col, maintain_order=True)
+
+            filled_ts_parts = []
+            for part in parts:
+                part = part.with_columns([
+                    pl.col('_ts_nn').forward_fill().alias(ts_fwd_col),
+                    pl.col('_ts_nn').backward_fill().alias(ts_bwd_col),
+                ])
+                filled_ts_parts.append(part)
+            df_with_ts = pl.concat(filled_ts_parts, how="vertical_relaxed").drop('_ts_nn')
+
             gap_size = (
-                ts_at_non_null.backward_fill().over(seq_id_col) - 
-                ts_at_non_null.forward_fill().over(seq_id_col)
-            ).dt.total_seconds()
-            
-            # Mask for small gaps where we want to interpolate
-            is_small_gap = (gap_size > 0) & (gap_size <= self.small_gap_max_seconds)
-            
-            # Linear interpolation
-            interpolated_values = pl.col(field).interpolate().over(seq_id_col)
-            
+                df_with_ts[ts_bwd_col].cast(pl.Int64) - df_with_ts[ts_fwd_col].cast(pl.Int64)
+            ) / 1_000_000  # microseconds → seconds
+            is_small_gap_series = (gap_size > 0) & (gap_size <= self.small_gap_max_seconds)
+            is_small_gap = pl.Series(name='_is_small_gap', values=is_small_gap_series)
+            df = df_with_ts.drop([ts_fwd_col, ts_bwd_col])
+
+            # Linear interpolation — use map_batches to avoid Polars' over() length-mismatch
+            # bug (triggered in v1.x when certain group sizes interact with interpolate()).
+            interpolated_values = pl.col(field).map_batches(
+                lambda s: s.interpolate(), return_dtype=pl.Float64
+            ).over(seq_id_col)
+
+            # Evaluate is_small_gap as a literal column so it can be used in expressions.
+            df = df.with_columns(is_small_gap.alias('_is_small_gap'))
+
             # We want to mark rows as interpolated only if they were null, within a small gap,
             # and the interpolation actually produced a non-null value.
             # CRITICAL: We evaluate this before updating the column to avoid null_mask becoming false.
-            will_be_filled = pl.col(field).is_null() & is_small_gap & (interpolated_values.is_not_null())
+            will_be_filled = (
+                pl.col(field).is_null() &
+                pl.col('_is_small_gap') &
+                interpolated_values.is_not_null()
+            )
             
             # Update statistics using the condition before we update the dataframe
             interpolated_count = df.select(will_be_filled.sum()).item()
             per_field_interpolations[field] = int(interpolated_count) if interpolated_count is not None else 0
 
             update_exprs = [
-                pl.when(pl.col(field).is_null() & is_small_gap)
+                pl.when(pl.col(field).is_null() & pl.col('_is_small_gap'))
                 .then(interpolated_values)
                 .otherwise(pl.col(field))
                 .alias(field)
@@ -154,15 +188,22 @@ class ValueInterpolator:
                     .alias(event_type_col)
                 )
             
-            df = df.with_columns(update_exprs)
+            df = df.with_columns(update_exprs).drop('_is_small_gap')
         
         for field in fields_to_interpolate:
             stats_key = field_stats_keys[field]
             interpolation_stats[f'{stats_key}_interpolations'] = per_field_interpolations[field]
         
-        # Step 2: Process timestamp-based gaps
+        # Step 2: Process timestamp-based gaps.
+        # Sort by (seq_id, timestamp) so diff() and same_seq mask work correctly
+        # without needing .over() (which has a length-mismatch bug in Polars 1.x).
+        df = df.sort([seq_id_col, ts_col])
+        same_seq_mask = pl.col(seq_id_col) == pl.col(seq_id_col).shift(1)
         df_with_diffs = df.with_row_index('row_idx').with_columns([
-            (pl.col(ts_col).diff().over(seq_id_col).dt.total_seconds() / 60.0).alias('time_diff_minutes')
+            pl.when(same_seq_mask)
+            .then((pl.col(ts_col) - pl.col(ts_col).shift(1)).dt.total_seconds() / 60.0)
+            .otherwise(None)
+            .alias('time_diff_minutes')
         ])
         
         df_with_gaps = df_with_diffs.with_columns([
@@ -184,25 +225,49 @@ class ValueInterpolator:
         interpolation_stats['total_interpolations'] = total_interpolations
         
         if small_gaps_df.height > 0:
+            # Sort so shift(1) is in-order within each sequence.
+            df_with_gaps = df_with_gaps.sort([seq_id_col, ts_col])
+            # same_seq mask: True when this row and the previous row share the same sequence_id.
+            # Used to zero-out cross-boundary shifts instead of relying on .over().
+            same_seq = pl.col(seq_id_col) == pl.col(seq_id_col).shift(1)
+
             prev_cols = [
-                pl.col(ts_col).shift(1).over(seq_id_col).alias('prev_timestamp')
+                pl.when(same_seq)
+                .then(pl.col(ts_col).shift(1))
+                .otherwise(None)
+                .alias('prev_timestamp')
             ]
             
             for field in fields_to_interpolate:
                 safe_name = field_safe_names[field]
-                prev_cols.append(pl.col(field).shift(1).over(seq_id_col).alias(f'prev_{safe_name}'))
+                prev_cols.append(
+                    pl.when(same_seq)
+                    .then(pl.col(field).shift(1))
+                    .otherwise(None)
+                    .alias(f'prev_{safe_name}')
+                )
             
             # Use safe names for fill_during_interp fields too
             fill_field_safe_names: Dict[str, str] = {}
             for field in fill_during_interp_fields:
                 safe_name = field.replace(" ", "_").replace("(", "").replace(")", "").replace("/", "_") + "_fill"
                 fill_field_safe_names[field] = safe_name
-                prev_cols.append(pl.col(field).shift(1).over(seq_id_col).alias(f'prev_{safe_name}'))
-                # We also need the current value to check if it matches
+                prev_cols.append(
+                    pl.when(same_seq)
+                    .then(pl.col(field).shift(1))
+                    .otherwise(None)
+                    .alias(f'prev_{safe_name}')
+                )
+                # Current value for match-check
                 prev_cols.append(pl.col(field).alias(f'curr_{safe_name}'))
 
             if user_id_col in df_with_gaps.columns and user_id_col not in fill_during_interp_fields:
-                prev_cols.append(pl.col(user_id_col).shift(1).over(seq_id_col).alias('prev_user_id'))
+                prev_cols.append(
+                    pl.when(same_seq)
+                    .then(pl.col(user_id_col).shift(1))
+                    .otherwise(None)
+                    .alias('prev_user_id')
+                )
             
             df_with_prev = df_with_gaps.with_columns(prev_cols)
             
@@ -349,16 +414,16 @@ class ValueInterpolator:
                 percentage = (count / total_rows) * 100
                 interpolation_stats[f'{stats_key}_interpolations_pct'] = round(percentage, 2)
         
-        logger.info(f"Identified and processed {interpolation_stats['small_gaps_filled']} small gaps")
-        logger.info(f"Created {interpolation_stats['total_interpolated_data_points']} interpolated (inserted) data points")
+        logger.debug(f"Identified and processed {interpolation_stats['small_gaps_filled']} small gaps")
+        logger.debug(f"Created {interpolation_stats['total_interpolated_data_points']} interpolated (inserted) data points")
         
         for field in fields_to_interpolate:
             count = interpolation_stats.get(f'{field_stats_keys[field]}_interpolations', 0)
             pct = interpolation_stats.get(f'{field_stats_keys[field]}_interpolations_pct', 0)
-            logger.info(f"Interpolated {field}: {count:,} ({pct}%)")
+            logger.debug(f"Interpolated {field}: {count:,} ({pct}%)")
             
-        logger.info(f"Skipped {interpolation_stats['large_gaps_skipped']} large gaps")
-        logger.info(f"Processed {interpolation_stats['sequences_processed']} sequences")
+        logger.debug(f"Skipped {interpolation_stats['large_gaps_skipped']} large gaps")
+        logger.debug(f"Processed {interpolation_stats['sequences_processed']} sequences")
         
         return df, interpolation_stats
 

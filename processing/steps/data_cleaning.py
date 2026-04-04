@@ -41,15 +41,15 @@ class DataCleaner:
         # If glucose column is missing, it means there is no glucose data at all for this set.
         # In this case, we remove all records as they are "far from glucose".
         if glucose_col not in df.columns:
-            logger.info(f"Glucose column {glucose_col} not found. Removing all {original_count} records.")
+            logger.debug(f"Glucose column {glucose_col} not found. Removing all {original_count} records.")
             return df.filter(pl.lit(False)), {"removed_records": original_count}
             
         # Check if there are any non-null glucose values
         if df.select(pl.col(glucose_col).is_not_null().any()).item() is False:
-            logger.info(f"No non-null glucose values found in {glucose_col}. Removing all {original_count} records.")
+            logger.debug(f"No non-null glucose values found in {glucose_col}. Removing all {original_count} records.")
             return df.filter(pl.lit(False)), {"removed_records": original_count}
 
-        logger.info(f"Cleaning covariate data in gaps > {self.small_gap_max_seconds / 60} minutes...")
+        logger.debug(f"Cleaning covariate data in gaps > {self.small_gap_max_seconds / 60} minutes...")
         
         # Sort by user and timestamp if multi-user
         if user_id_col in df.columns:
@@ -67,7 +67,7 @@ class DataCleaner:
             df = self._apply_cleaning_logic(df, ts_col, glucose_col)
             
         removed_count = original_count - len(df)
-        logger.info(f"Removed {removed_count} records located in large glucose gaps")
+        logger.debug(f"Removed {removed_count} records located in large glucose gaps")
         
         return df, {"removed_records": removed_count}
 

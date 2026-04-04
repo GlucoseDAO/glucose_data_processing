@@ -32,7 +32,7 @@ class GapDetector:
         Main entry point for gap detection and sequence creation.
         """
         if df.height == 0:
-            logger.info("Empty dataframe - skipping gap detection")
+            logger.debug("Empty dataframe - skipping gap detection")
             return df, {
                 'total_sequences': 0,
                 'gap_positions': 0,
@@ -45,7 +45,7 @@ class GapDetector:
                 }
             }, last_sequence_id
 
-        logger.info("Detecting gaps and creating sequences...")
+        logger.debug("Detecting gaps and creating sequences...")
         
         ts_col = StandardFieldNames.TIMESTAMP
         user_id_col = StandardFieldNames.USER_ID
@@ -59,7 +59,7 @@ class GapDetector:
         current_last_sequence_id = last_sequence_id
         
         if user_id_col in df.columns:
-            logger.info("Processing multi-user data - creating sequences per user...")
+            logger.debug("Processing multi-user data - creating sequences per user...")
             all_sequences: List[pl.DataFrame] = []
             
             for user_id in sorted(df[user_id_col].unique().to_list()):
@@ -104,12 +104,12 @@ class GapDetector:
                 'calibration_period_analysis': calibration_stats
             }
         
-        logger.info(f"Created {stats['total_sequences']} sequences")
-        logger.info(f"Found {stats['total_gaps']} gaps > {self.small_gap_max_seconds / 60} minutes")
+        logger.debug(f"Created {stats['total_sequences']} sequences")
+        logger.debug(f"Found {stats['total_gaps']} gaps > {self.small_gap_max_seconds / 60} minutes")
         
         if calibration_stats['calibration_periods_detected'] > 0:
-            logger.info(f"Detected {calibration_stats['calibration_periods_detected']} calibration periods")
-            logger.info(f"Removed {calibration_stats['total_records_marked_for_removal']} records after calibration")
+            logger.debug(f"Detected {calibration_stats['calibration_periods_detected']} calibration periods")
+            logger.debug(f"Removed {calibration_stats['total_records_marked_for_removal']} records after calibration")
         
         columns_to_remove = ['time_diff_seconds', 'is_gap', 'is_calibration_gap', 'remove_due_to_calibration']
         df = df.drop([col for col in columns_to_remove if col in df.columns])

@@ -174,7 +174,7 @@ def main(
     """
     # Configure loguru to show only the message, matching the old print() behavior
     logger.remove()
-    logger.add(sys.stdout, format="{message}")
+    logger.add(sys.stdout, format="{message}", level="INFO")
     
     # Validate input paths
     validated_folders: List[Path] = []

@@ -9,7 +9,7 @@ normalizes them into the project's standard field names.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import io
 import json
 from pathlib import Path
@@ -254,6 +254,7 @@ class AIReadyDatabaseConverter(DatabaseConverter):
 
         cgm = self._extract_cgm_df(zip_ref, layout, user_id)
         if cgm is not None:
+            cgm = cgm.with_columns(pl.lit(1.0).alias("y_observed"))
             frames.append(self._resample(cgm, interval, agg="last"))
 
         heart_rate = self._extract_series_df(
@@ -265,7 +266,24 @@ class AIReadyDatabaseConverter(DatabaseConverter):
             value_col="heart_rate",
         )
         if heart_rate is not None:
-            frames.append(self._resample(heart_rate, interval, agg="mean"))
+            # Clean sentinel values: heart_rate <= 0 -> NULL
+            heart_rate = heart_rate.with_columns(
+                pl.when(pl.col("heart_rate") > 0)
+                .then(pl.col("heart_rate"))
+                .otherwise(None)
+                .alias("heart_rate")
+            )
+            heart_rate = heart_rate.with_columns(
+                pl.when(pl.col("heart_rate").is_not_null())
+                .then(1.0)
+                .otherwise(0.0)
+                .alias("hr_observed")
+            )
+            resampled_hr = self._resample(heart_rate, interval, agg="mean")
+            resampled_hr = resampled_hr.with_columns(
+                pl.when(pl.col("hr_observed") > 0).then(1.0).otherwise(0.0).alias("hr_observed")
+            )
+            frames.append(resampled_hr)
 
         stress = self._extract_series_df(
             zip_ref,
@@ -276,29 +294,60 @@ class AIReadyDatabaseConverter(DatabaseConverter):
             value_col="stress_level",
         )
         if stress is not None:
-            frames.append(self._resample(stress, interval, agg="mean"))
+            # Clean sentinel values: stress_level < 0 -> NULL
+            stress = stress.with_columns(
+                pl.when(pl.col("stress_level") >= 0)
+                .then(pl.col("stress_level"))
+                .otherwise(None)
+                .alias("stress_level")
+            )
+            stress = stress.with_columns(
+                pl.when(pl.col("stress_level").is_not_null())
+                .then(1.0)
+                .otherwise(0.0)
+                .alias("stress_observed")
+            )
+            resampled_stress = self._resample(stress, interval, agg="mean")
+            resampled_stress = resampled_stress.with_columns(
+                pl.when(pl.col("stress_observed") > 0).then(1.0).otherwise(0.0).alias("stress_observed")
+            )
+            frames.append(resampled_stress)
 
-        calories = self._extract_series_df(
+        calories = self._extract_interval_series_df(
             zip_ref,
             layout.garmin_file("physical_activity_calorie", user_id, "calorie"),
             records_path="body.activity",
-            timestamp_path="effective_time_frame.date_time",
+            start_ts_path=["effective_time_frame.date_time", "effective_time_frame.time_interval.start_date_time"],
+            end_ts_path="effective_time_frame.time_interval.end_date_time",
             value_path="calories_value.value",
             value_col="active_kcal",
+            interval_minutes=interval_minutes,
         )
         if calories is not None:
-            frames.append(self._resample(calories, interval, agg="sum"))
+            calories = calories.rename({"active_kcal_observed": "kcal_observed"})
+            resampled_cal = self._resample(calories, interval, agg="sum")
+            resampled_cal = resampled_cal.with_columns(
+                pl.when(pl.col("kcal_observed") > 0).then(1.0).otherwise(0.0).alias("kcal_observed")
+            )
+            frames.append(resampled_cal)
 
-        steps = self._extract_series_df(
+        steps = self._extract_interval_series_df(
             zip_ref,
             layout.garmin_file("physical_activity", user_id, "activity"),
             records_path="body.activity",
-            timestamp_path="effective_time_frame.time_interval.start_date_time",
+            start_ts_path="effective_time_frame.time_interval.start_date_time",
+            end_ts_path="effective_time_frame.time_interval.end_date_time",
             value_path="base_movement_quantity.value",
             value_col="step_count",
+            interval_minutes=interval_minutes,
         )
         if steps is not None:
-            frames.append(self._resample(steps, interval, agg="sum"))
+            steps = steps.rename({"step_count_observed": "steps_observed"})
+            resampled_steps = self._resample(steps, interval, agg="sum")
+            resampled_steps = resampled_steps.with_columns(
+                pl.when(pl.col("steps_observed") > 0).then(1.0).otherwise(0.0).alias("steps_observed")
+            )
+            frames.append(resampled_steps)
 
         rr = self._extract_series_df(
             zip_ref,
@@ -309,7 +358,24 @@ class AIReadyDatabaseConverter(DatabaseConverter):
             value_col="respiratory_rate",
         )
         if rr is not None:
-            frames.append(self._resample(rr, interval, agg="mean"))
+            # Clean sentinel values: respiratory_rate < 0 -> NULL
+            rr = rr.with_columns(
+                pl.when(pl.col("respiratory_rate") >= 0)
+                .then(pl.col("respiratory_rate"))
+                .otherwise(None)
+                .alias("respiratory_rate")
+            )
+            rr = rr.with_columns(
+                pl.when(pl.col("respiratory_rate").is_not_null())
+                .then(1.0)
+                .otherwise(0.0)
+                .alias("resp_observed")
+            )
+            resampled_rr = self._resample(rr, interval, agg="mean")
+            resampled_rr = resampled_rr.with_columns(
+                pl.when(pl.col("resp_observed") > 0).then(1.0).otherwise(0.0).alias("resp_observed")
+            )
+            frames.append(resampled_rr)
 
         ox = self._extract_series_df(
             zip_ref,
@@ -320,7 +386,17 @@ class AIReadyDatabaseConverter(DatabaseConverter):
             value_col="oxygen_saturation_percent",
         )
         if ox is not None:
-            frames.append(self._resample(ox, interval, agg="mean"))
+            ox = ox.with_columns(
+                pl.when(pl.col("oxygen_saturation_percent").is_not_null())
+                .then(1.0)
+                .otherwise(0.0)
+                .alias("spo2_observed")
+            )
+            resampled_ox = self._resample(ox, interval, agg="mean")
+            resampled_ox = resampled_ox.with_columns(
+                pl.when(pl.col("spo2_observed") > 0).then(1.0).otherwise(0.0).alias("spo2_observed")
+            )
+            frames.append(resampled_ox)
 
         sleep = self._extract_sleep_df(zip_ref, layout, user_id)
         if sleep is not None:
@@ -330,6 +406,18 @@ class AIReadyDatabaseConverter(DatabaseConverter):
             return pl.DataFrame({"user_id": [], "timestamp": [], "event_type": []})
 
         df = self._outer_join_all(frames)
+        
+        # Ensure Priority 1 observation masks are present
+        priority_masks = ["y_observed", "steps_observed", "kcal_observed", "hr_observed", "stress_observed", "resp_observed", "spo2_observed"]
+        for mask in priority_masks:
+            if mask not in df.columns:
+                df = df.with_columns(pl.lit(0.0).alias(mask))
+
+        # Fill missing observation masks with 0
+        mask_cols = [c for c in df.columns if c.endswith("_observed")]
+        if mask_cols:
+            df = df.with_columns([pl.col(c).fill_null(0.0) for c in mask_cols])
+
         df = df.with_columns(
             pl.lit(int(user_id) if user_id.isdigit() else user_id).alias("user_id"),
             pl.lit("AI_READY").alias("event_type"),
@@ -450,6 +538,102 @@ class AIReadyDatabaseConverter(DatabaseConverter):
         if not ts_list:
             return None
         return pl.DataFrame({"timestamp": ts_list, value_col: val_list})
+
+    def _extract_interval_series_df(
+        self,
+        zip_ref: zipfile.ZipFile,
+        member: str,
+        *,
+        records_path: str,
+        start_ts_path: Union[str, list[str]],
+        end_ts_path: str,
+        value_path: str,
+        value_col: str,
+        interval_minutes: int,
+    ) -> Optional[pl.DataFrame]:
+        try:
+            obj = _json_load_from_zip(zip_ref, member)
+        except KeyError:
+            return None
+
+        records = _dig(obj, records_path)
+        if not isinstance(records, list):
+            return None
+
+        ts_list: list[datetime] = []
+        val_list: list[float] = []
+        obs_list: list[float] = []
+        
+        interval_delta = timedelta(minutes=interval_minutes)
+
+        for rec in records:
+            if not isinstance(rec, dict):
+                continue
+            
+            # Try multiple start paths if provided
+            start_ts = None
+            if isinstance(start_ts_path, list):
+                for p in start_ts_path:
+                    start_ts = _dig(rec, p)
+                    if start_ts:
+                        break
+            else:
+                start_ts = _dig(rec, start_ts_path)
+                
+            end_ts = _dig(rec, end_ts_path)
+            val = _dig(rec, value_path)
+            
+            if not isinstance(start_ts, str) or val is None:
+                continue
+                
+            start_dt = _parse_timestamp_to_naive_utc(start_ts)
+            if start_dt is None:
+                continue
+            
+            # If end_ts is missing or parsing fails, treat as point value
+            end_dt = _parse_timestamp_to_naive_utc(end_ts) if isinstance(end_ts, str) else None
+            
+            try:
+                f_val = float(val)
+            except (ValueError, TypeError):
+                continue
+
+            if end_dt is None or end_dt <= start_dt:
+                ts_list.append(start_dt)
+                val_list.append(f_val)
+                obs_list.append(1.0)
+                continue
+                
+            duration = (end_dt - start_dt).total_seconds()
+            
+            # Find the start of the first grid bin
+            current_bin_start = start_dt.replace(second=0, microsecond=0)
+            grid_offset = current_bin_start.minute % interval_minutes
+            current_bin_start -= timedelta(minutes=grid_offset)
+            
+            while current_bin_start < end_dt:
+                current_bin_end = current_bin_start + interval_delta
+                
+                overlap_start = max(start_dt, current_bin_start)
+                overlap_end = min(end_dt, current_bin_end)
+                
+                overlap_duration = (overlap_end - overlap_start).total_seconds()
+                if overlap_duration > 0:
+                    share = overlap_duration / duration
+                    ts_list.append(current_bin_start)
+                    val_list.append(f_val * share)
+                    obs_list.append(1.0)
+                
+                current_bin_start = current_bin_end
+
+        if not ts_list:
+            return None
+        
+        return pl.DataFrame({
+            "timestamp": ts_list, 
+            value_col: val_list, 
+            f"{value_col}_observed": obs_list
+        })
 
     def _resample(self, df: pl.DataFrame, every: str, *, agg: str) -> pl.DataFrame:
         """

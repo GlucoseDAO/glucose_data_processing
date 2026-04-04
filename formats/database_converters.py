@@ -469,6 +469,9 @@ class MultiUserDatabaseConverter(DatabaseConverter):
             # Sort by user_id and timestamp
             df = df.sort(['user_id', 'timestamp'])
             
+            # Apply database-specific processing
+            df = self._apply_database_specific_processing(df)
+            
             yield df
 
     def _identify_users(self, data_path: Path) -> Dict[str, List[Path]]:
@@ -605,6 +608,18 @@ class MultiUserDatabaseConverter(DatabaseConverter):
             logger.info(f"Error processing {file_path}: {e}")
         
         return data
+
+    def _apply_database_specific_processing(self, df: pl.DataFrame) -> pl.DataFrame:
+        """
+        Apply database-specific processing (to be overridden by subclasses).
+        
+        Args:
+            df: DataFrame to process
+            
+        Returns:
+            Processed DataFrame
+        """
+        return df
     
     def get_database_name(self) -> str:
         """Get the name of the database type."""
