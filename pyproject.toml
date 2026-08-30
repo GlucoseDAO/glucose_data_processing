@@ -1,0 +1,44 @@
+[project]
+name = "glucose-dataset"
+version = "0.1.0"
+description = "A project to preprocess datasets for glucose ML training"
+requires-python = ">=3.12"
+dependencies = [
+    "pandas>=2.3.2",
+    "polars>=1.33.1",
+    "pyarrow>=21.0.0",
+    "typer>=0.12.0",
+    "pyyaml>=6.0",
+    "eliot",
+    "loguru>=0.7.3",
+    "fastexcel>=0.18.0",
+    "fsspec",
+    "aiohttp",
+    "s3fs",
+    "requests",
+    "duckdb>=1.5.0",
+]
+
+[project.scripts]
+glucose-process = "glucose_cli:app"
+glucose-compare = "compare_checkpoints:app"
+glucose-download = "download:app"
+
+[dependency-groups]
+dev = [
+    "jupyterlab>=4.5.2",
+    "pytest>=8.4.2",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+package = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["formats", "processing", "glucose_cli.py", "compare_checkpoints.py", "glucose_ml_preprocessor.py", "download.py"]

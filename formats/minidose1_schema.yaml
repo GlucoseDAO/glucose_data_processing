@@ -1,0 +1,30 @@
+database: minidose1
+timestamp_formats:
+  - "%Y-%m-%dT%H:%M:%S"
+timestamp_output_format: "%Y-%m-%dT%H:%M:%S"
+remove_after_calibration: false
+field_categories:
+  timestamp: service
+  event_type: service
+  glucose_value_mgdl: continuous
+  long_acting_insulin_u: occasional_sum
+  fast_acting_insulin_u: occasional_sum
+  carb_grams: occasional_sum
+  user_id: service
+converters:
+  cgm:
+    timestamp_field: timestamp
+    event_type: EGV
+    field_mappings:
+      Glucose: glucose_value_mgdl
+  bgm:
+    timestamp_field: timestamp
+    event_type: BGM
+    field_mappings:
+      Glucose: glucose_value_mgdl
+  pump:
+    timestamp_field: timestamp
+    field_mappings:
+      BolusVolDeliv: fast_acting_insulin_u
+      BasalRate: long_acting_insulin_u
+      WizardCarbs: carb_grams

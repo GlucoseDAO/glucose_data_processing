@@ -1,0 +1,53 @@
+database: uc_ht
+timestamp_formats:
+  - "%Y-%m-%d %H:%M:%S"
+timestamp_output_format: "%Y-%m-%dT%H:%M:%S"
+remove_after_calibration: false
+field_categories:
+  timestamp: service
+  event_type: service
+  glucose_value_mgdl: continuous
+  heart_rate: continuous
+  step_count: continuous
+  carb_grams: occasional_sum
+  long_acting_insulin_u: continuous
+  fast_acting_insulin_u: occasional_sum
+  igar_g_min: continuous
+converters:
+  glucose:
+    timestamp_field: "__UNNAMED__0"
+    event_type: EGV
+    field_mappings:
+      "__UNNAMED__0": timestamp
+      "Value (mg/dl)": glucose_value_mgdl
+  heart_rate:
+    timestamp_field: "__UNNAMED__0"
+    event_type: HeartRate
+    field_mappings:
+      "__UNNAMED__0": timestamp
+      "Value (bpm)": heart_rate
+  steps:
+    timestamp_field: "__UNNAMED__0"
+    event_type: Steps
+    field_mappings:
+      "__UNNAMED__0": timestamp
+      "Value (-)": step_count
+  carbohydrates:
+    timestamp_field: "__UNNAMED__0"
+    event_type: Meal
+    field_mappings:
+      "__UNNAMED__0": timestamp
+      "Value (g)": carb_grams
+  insulin:
+    timestamp_field: "__UNNAMED__0"
+    event_type: Insulin
+    field_mappings:
+      "__UNNAMED__0": timestamp
+      "Basal Rate (U/5min)": long_acting_insulin_u
+      "Bolus (U)": fast_acting_insulin_u
+  igar:
+    timestamp_field: "__UNNAMED__0"
+    event_type: IGAR
+    field_mappings:
+      "__UNNAMED__0": timestamp
+      "Value (g)": igar_g_min

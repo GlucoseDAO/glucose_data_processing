@@ -1,0 +1,103 @@
+database: ai_ready
+timestamp_formats:
+- "%Y-%m-%dT%H:%M:%SZ"
+- "%Y-%m-%dT%H:%M:%S%z"
+- "%Y-%m-%dT%H:%M:%S"
+- "%Y-%m-%d %H:%M:%S"
+timestamp_output_format: "%Y-%m-%dT%H:%M:%S"
+remove_after_calibration: false
+field_categories:
+  timestamp: service
+  event_type: service
+  user_id: service
+  clinical_site: service
+  study_group: service
+  recommended_split: service
+  age: service
+  study_visit_date: service
+  glucose_value_mgdl: continuous
+  heart_rate: continuous
+  active_kcal: occasional_sum
+  step_count: occasional_sum
+  stress_level: occasional_avg
+  respiratory_rate: continuous
+  oxygen_saturation_percent: continuous
+  sleep_level: occasional_avg
+  y_observed: mask
+  hr_observed: mask
+  steps_observed: mask
+  kcal_observed: mask
+  stress_observed: mask
+  resp_observed: mask
+  spo2_observed: mask
+fill_during_interpolation:
+  - user_id
+  - recommended_split
+  - age
+  - study_group
+converters:
+  cgm_dexcom_g6:
+    format: json
+    event_type: EGV
+    user_id_source: header.patient_id
+    records_path: body.cgm
+    timestamp_path: effective_time_frame.time_interval.start_date_time
+    field_paths:
+      blood_glucose.value: glucose_value_mgdl
+  garmin_heart_rate:
+    format: json
+    event_type: HeartRate
+    user_id_source: header.user_id
+    records_path: body.heart_rate
+    timestamp_path: effective_time_frame.date_time
+    field_paths:
+      heart_rate.value: heart_rate
+  garmin_activity:
+    format: json
+    event_type: Activity
+    user_id_source: header.user_id
+    records_path: body.activity
+    timestamp_path: effective_time_frame.time_interval.start_date_time
+    field_paths:
+      base_movement_quantity.value: step_count
+  garmin_calorie:
+    format: json
+    event_type: Calories
+    user_id_source: header.user_id
+    records_path: body.activity
+    timestamp_path: effective_time_frame.date_time
+    field_paths:
+      calories_value.value: active_kcal
+  garmin_stress:
+    format: json
+    event_type: Stress
+    user_id_source: header.user_id
+    records_path: body.stress
+    timestamp_path: effective_time_frame.date_time
+    field_paths:
+      stress.value: stress_level
+  garmin_sleep:
+    format: json
+    event_type: Sleep
+    user_id_source: header.user_id
+    records_path: body.sleep
+    timestamp_path: effective_time_frame.time_interval.start_date_time
+    field_paths:
+      sleep_stage_state: sleep_level
+  garmin_respiratory_rate:
+    format: json
+    event_type: RespiratoryRate
+    user_id_source: header.user_id
+    records_path: body.breathing
+    timestamp_path: effective_time_frame.date_time
+    field_paths:
+      respiratory_rate.value: respiratory_rate
+  garmin_oxygen_saturation:
+    format: json
+    event_type: OxygenSaturation
+    user_id_source: header.user_id
+    records_path: body.breathing
+    timestamp_path: effective_time_frame.date_time
+    field_paths:
+      oxygen_saturation.value: oxygen_saturation_percent
+

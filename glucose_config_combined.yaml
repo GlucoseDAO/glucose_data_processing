@@ -1,0 +1,43 @@
+expected_interval_minutes: 5
+small_gap_max_minutes: 15
+min_sequence_len: 200
+save_intermediate_files: false
+create_fixed_frequency: true
+glucose_only: false
+calibration_period_minutes: 165
+remove_after_calibration_hours: 24
+restrict_output_to_config_fields: true
+
+database_configs:
+  ai_ready:
+    start_with_user_id: "1023"
+  hupa:
+    # HUPA specific settings
+  medtronic:
+    # Medtronic specific settings
+  minidose1:
+    # MiniDose1 Clinical Trial dataset specific settings
+  loop:
+    # Loop automated insulin delivery system dataset
+
+output_fields:
+  - "timestamp"
+  - "event_type"
+  - "glucose_value_mgdl"
+  - "heart_rate"
+  - "stress_level"
+  - "active_kcal"
+  - "step_count"
+  - "igar_g_min"
+  - "user_id"
+
+field_to_display_name_map:
+  timestamp: "Timestamp (YYYY-MM-DDThh:mm:ss)"
+  event_type: "Event Type"
+  glucose_value_mgdl: "Glucose Value (mg/dL)"
+  heart_rate: "Heart Rate"
+  stress_level: "Stress Level"
+  active_kcal: "Active Calories (kcal)"
+  step_count: "Step Count"
+  igar_g_min: "IGAR (g/min)"
+  user_id: "user_id"

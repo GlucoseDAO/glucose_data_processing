@@ -1,0 +1,35 @@
+database: loop
+timestamp_formats:
+  - "%Y-%m-%dT%H:%M:%S"
+  - "%Y-%m-%d %H:%M:%S"
+timestamp_output_format: "%Y-%m-%dT%H:%M:%S"
+remove_after_calibration: false
+field_categories:
+  timestamp: service
+  event_type: service
+  glucose_value_mgdl: continuous
+  basal_rate: fill_during_interpolation
+  fast_acting_insulin_u: occasional_sum
+  carb_grams: occasional_sum
+  user_id: service
+converters:
+  cgm:
+    timestamp_field: UTCDtTm
+    event_type: EGV
+    field_mappings:
+      CGMVal: glucose_value_mgdl
+  basal:
+    timestamp_field: UTCDtTm
+    event_type: Basal
+    field_mappings:
+      Rate: basal_rate
+  bolus:
+    timestamp_field: UTCDtTm
+    event_type: Bolus
+    field_mappings:
+      Normal: fast_acting_insulin_u
+  food:
+    timestamp_field: UTCDtTm
+    event_type: Meal
+    field_mappings:
+      CarbsNet: carb_grams

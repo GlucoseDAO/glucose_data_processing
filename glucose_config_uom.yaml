@@ -1,0 +1,39 @@
+# UOM processing config
+expected_interval_minutes: 5
+small_gap_max_minutes: 15
+min_sequence_len: 200
+save_intermediate_files: false
+create_fixed_frequency: true
+glucose_only: false
+
+# Output filtering
+restrict_output_to_config_fields: true
+service_fields_allowlist:
+  - "timestamp"
+  - "event_type"
+  - "user_id"
+
+# Field mappings configuration
+output_fields:
+  - "timestamp"
+  - "event_type"
+  - "glucose_value_mgdl"
+  - "heart_rate"
+  - "step_count"
+  - "active_kcal"
+  - "stress_level"
+  - "long_acting_insulin_u"
+  - "fast_acting_insulin_u"
+  - "carb_grams"
+
+field_to_display_name_map:
+  timestamp: "Timestamp"
+  event_type: "Event Type"
+  glucose_value_mgdl: "Glucose"
+  heart_rate: "Heart Rate"
+  step_count: "Steps"
+  active_kcal: "Calories"
+  stress_level: "Stress"
+  long_acting_insulin_u: "Long acting insulin"
+  fast_acting_insulin_u: "Fast acting insulin"
+  carb_grams: "Carbs (grams)"

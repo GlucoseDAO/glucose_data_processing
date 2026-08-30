@@ -1,0 +1,131 @@
+database: uom
+timestamp_formats:
+  - "%d/%m/%Y %H:%M:%S"
+  - "%d/%m/%Y %H:%M"
+timestamp_output_format: "%Y-%m-%dT%H:%M:%S"
+remove_after_calibration: false
+field_categories:
+  timestamp: service
+  event_type: service
+  glucose_value_mgdl: continuous
+  long_acting_insulin_u: occasional_sum
+  fast_acting_insulin_u: occasional_sum
+  carb_grams: occasional_sum
+  protein_grams: occasional_sum
+  fat_grams: occasional_sum
+  fiber_grams: occasional_sum
+  heart_rate: continuous
+  resting_heart_rate: occasional_avg
+  step_count: occasional_sum
+  distance_m: occasional_sum
+  motion_intensity_mean: occasional_avg
+  motion_intensity_max: continuous
+  active_kcal: occasional_sum
+  duration_s: service
+  active_time_s: continuous
+  stress_level: continuous
+  sleep_duration_seconds: occasional_sum
+  deep_sleep_seconds: occasional_sum
+  light_sleep_seconds: occasional_sum
+  rem_sleep_seconds: occasional_sum
+  awake_seconds: occasional_sum
+  unmeasurable_sleep_seconds: occasional_sum
+  activity_type: occasional_sum
+  insulin_kind: occasional_sum
+  meal_type: occasional_sum
+  meal_tag: occasional_sum
+  start_time_s: occasional_sum
+  start_time_offset_s: occasional_sum
+  start_time_offset_seconds: occasional_sum
+  met: occasional_avg
+  intensity: occasional_avg
+  activity_intensity: occasional_avg
+  sleep_level: occasional_avg
+  y_observed: mask
+  steps_observed: mask
+  hr_observed: mask
+  calendar_date: service
+  sleep_levels_map_deep: occasional_sum
+  sleep_levels_map_light: occasional_sum
+  sleep_levels_map_awake: occasional_sum
+  sleep_levels_map_rem: occasional_sum
+  sleep_levels_map_unmeasurable: occasional_sum
+  validation: occasional_sum
+converters:
+  activity:
+    timestamp_field: activity_ts
+    event_type: Activity
+    field_mappings:
+      activity_ts: timestamp
+      activity_type: activity_type
+      active_Kcal: active_kcal
+      step_count: step_count
+      distance_m: distance_m
+      duration_s: duration_s
+      active_time_s: active_time_s
+      start_time_s: start_time_s
+      start_time_offset_s: start_time_offset_s
+      met: met
+      intensity: intensity
+      motion_intensity_mean: motion_intensity_mean
+      motion_intensity_max: motion_intensity_max
+  glucose:
+    timestamp_field: bg_ts
+    event_type: EGV
+    field_mappings:
+      bg_ts: timestamp
+      value: glucose_value_mgdl
+  basal:
+    timestamp_field: basal_ts
+    event_type: Basal
+    field_mappings:
+      basal_ts: timestamp
+      basal_dose: long_acting_insulin_u
+      insulin_kind: insulin_kind
+  bolus:
+    timestamp_field: bolus_ts
+    event_type: Bolus
+    field_mappings:
+      bolus_ts: timestamp
+      bolus_dose: fast_acting_insulin_u
+  nutrition:
+    timestamp_field: meal_ts
+    event_type: Meal
+    field_mappings:
+      meal_ts: timestamp
+      meal_type: meal_type
+      meal_tag: meal_tag
+      carbs_g: carb_grams
+      prot_g: protein_grams
+      fat_g: fat_grams
+      fibre_g: fiber_grams
+  sleep:
+    timestamp_field: sleep_ts
+    event_type: Sleep
+    field_mappings:
+      sleep_ts: timestamp
+      step_count: step_count
+      heart_rate: heart_rate
+      current_activity_type_intensity: activity_intensity
+      stress_level_value: stress_level
+      sleep_level: sleep_level
+      resting_heart_rate: resting_heart_rate
+  sleeptime:
+    timestamp_field: start_date_ts
+    event_type: SleepTime
+    field_mappings:
+      calendar_date: calendar_date
+      duration_in_sec: sleep_duration_seconds
+      start_date_ts: timestamp
+      start_time_offset_s: start_time_offset_seconds
+      unmeasurable_sleep_s: unmeasurable_sleep_seconds
+      deep_sleep_s: deep_sleep_seconds
+      light_sleep_s: light_sleep_seconds
+      rem_sleep_s: rem_sleep_seconds
+      awake_s: awake_seconds
+      sleep_levels_map.deep: sleep_levels_map_deep
+      sleep_levels_map_light: sleep_levels_map_light
+      sleep_levels_map_awake: sleep_levels_map_awake
+      sleep_levels_map_rem: sleep_levels_map_rem
+      sleep_levels_map_unmeasurable: sleep_levels_map_unmeasurable
+      validation: validation

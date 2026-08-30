@@ -1,0 +1,94 @@
+# Glucose Data Preprocessing Configuration
+# Database-specific settings for different glucose monitoring systems
+
+# General preprocessing settings
+expected_interval_minutes: 5
+small_gap_max_minutes: 15
+min_sequence_len: 200
+save_intermediate_files: false
+create_fixed_frequency: true
+glucose_only: false
+round_precision: 3
+calibration_period_minutes: 165 # 2h 45m
+remove_after_calibration_hours: 24
+
+# Field mappings configuration
+# Output fields (standard field names) that should appear in CSV output
+# Fields not in field_to_display_name_map will use their field name as display name
+output_fields:
+  - "timestamp"
+  - "event_type"
+  - "glucose_value_mgdl"
+  - "fast_acting_insulin_u"
+  - "long_acting_insulin_u"
+  - "carb_grams"
+  - "heart_rate"
+  - "step_count"
+  - "basal_rate"
+  - "igar_g_min"
+  - "user_id"
+
+# Field to display name mapping (standard_name -> display_name)
+# Used to convert standard field names to display names in CSV output
+# Fields in output_fields but not in this map will use their standard name as display name
+field_to_display_name_map:
+  timestamp: "Timestamp (YYYY-MM-DDThh:mm:ss)"
+  event_type: "Event Type"
+  glucose_value_mgdl: "Glucose Value (mg/dL)"
+  fast_acting_insulin_u: "Fast-Acting Insulin Value (u)"
+  long_acting_insulin_u: "Long-Acting Insulin Value (u)"
+  carb_grams: "Carb Value (grams)"
+  heart_rate: "Heart Rate"
+  step_count: "Step Count"
+  basal_rate: "Basal Rate"
+  igar_g_min: "IGAR (g/min)"
+  user_id: "user_id"
+
+# Database-specific configurations
+dexcom:
+  # Dexcom G6 specific settings
+  high_glucose_value: 401
+  low_glucose_value: 39
+  remove_calibration: true
+
+libre3:
+  # FreeStyle Libre 3 specific settings
+  # No High/Low replacement or calibration removal needed
+  # as Libre3 provides numeric glucose values
+
+uom:
+  # University of Manchester T1D dataset specific settings
+  # Multi-user database - each user processed separately
+  # User ID extracted from filename patterns like UoMGlucose2301.csv
+  # Data types: glucose, basal insulin, bolus insulin, nutrition
+
+zendo:
+  # Zendo database specific settings (similar to UoM)
+  # Multi-user database with separate data types
+  # User ID and data type extracted from folder structure
+
+hupa:
+  # HUPA dataset specific settings
+  # Multi-user database - each user in a single CSV file
+  # User ID extracted from filename like HUPA0001P.csv
+  # Data types: glucose, calories, heart_rate, steps, basal_rate, bolus, carb_input
+
+uc_ht:
+  # UC_HT dataset specific settings
+  # Multi-user database - each user in a separate folder
+  # Data types: glucose, heart rate, steps, carbohidrates, insulin, IGAR
+
+medtronic:
+  # Medtronic specific settings
+  # Mono-user database - all CSV files in a folder belong to one user
+  # Support for semicolon delimiter and comma decimal separator
+
+minidose1:
+  # MiniDose1 Clinical Trial dataset specific settings
+  # Multi-user database - all users in shared pipe-separated files
+  # Relative timestamps converted to absolute using reference enrollment date
+
+loop:
+  # Loop automated insulin delivery system dataset
+  # Multi-user database - all users in shared pipe-separated files
+  # Data types: CGM, basal, bolus, food

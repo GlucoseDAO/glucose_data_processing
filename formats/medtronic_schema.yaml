@@ -1,0 +1,31 @@
+database: medtronic
+timestamp_formats:
+  - "%Y/%m/%d %H:%M:%S"
+  - "%Y-%m-%d %H:%M:%S"
+  - "%Y-%m-%dT%H:%M:%S"
+timestamp_output_format: "%Y-%m-%dT%H:%M:%S"
+remove_after_calibration: true
+field_categories:
+  timestamp: service
+  event_type: service
+  glucose_value_mgdl: continuous
+  fast_acting_insulin_u: occasional_sum
+  long_acting_insulin_u: occasional_sum
+  carb_grams: occasional_sum
+  basal_rate: continuous
+  sensor_calibration_bg: occasional_avg
+converters:
+  guardian:
+    timestamp_field: timestamp_combined
+    event_type: Medtronic
+    field_mappings:
+      Date: date
+      Time: time
+      Sensor Glucose (mg/dL): glucose_value_mgdl
+      BG Reading (mg/dL): bg_reading_mgdl
+      Basal Rate (U/h): basal_rate
+      Bolus Volume Delivered (U): fast_acting_insulin_u
+      BWZ Carb Input (grams): carb_grams
+      Sensor Calibration BG (mg/dL): sensor_calibration_bg
+      Event Marker: event_marker
+      Alarm: alarm

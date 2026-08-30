@@ -1,0 +1,77 @@
+# AI-READI processing config
+# - Keeps the core glucose pipeline fields
+# - Adds fields that exist in AI-READI: heart_rate + physical activity signals
+# - Uses streaming buffer settings for huge datasets
+
+# General preprocessing settings
+expected_interval_minutes: 5
+small_gap_max_minutes: 15
+min_sequence_len: 200
+save_intermediate_files: false
+create_fixed_frequency: true
+glucose_only: false
+
+# Streaming buffer control (used when converters expose iter_user_event_frames)
+streaming_max_buffer_mb: 64
+streaming_flush_max_users: 5
+output_file: "OUTPUT/ai_ready_processed_dataset.csv"
+
+# Output filtering: keep only output_fields + selected service fields
+restrict_output_to_config_fields: true
+service_fields_allowlist:
+  - "timestamp"
+  - "event_type"
+  - "user_id"
+  - "recommended_split"
+  - "study_group"
+
+# Field mappings configuration
+output_fields:
+  - "timestamp"
+  - "event_type"
+  - "user_id"
+  - "glucose_value_mgdl"
+  - "heart_rate"
+  - "step_count"
+  - "active_kcal"
+  - "stress_level"
+  - "respiratory_rate"
+  - "oxygen_saturation_percent"
+  - "age"
+  - "recommended_split"
+  - "study_group"
+  - "y_observed"
+  - "steps_observed"
+  - "hr_observed"
+  - "kcal_observed"
+  - "stress_observed"
+  - "resp_observed"
+  - "spo2_observed"
+
+field_to_display_name_map:
+  timestamp: "Timestamp (YYYY-MM-DDThh:mm:ss)"
+  event_type: "Event Type"
+  user_id: "User ID"
+  glucose_value_mgdl: "Glucose Value (mg/dL)"
+  heart_rate: "Heart Rate"
+  step_count: "Step Count"
+  active_kcal: "Active Calories (kcal)"
+  stress_level: "Stress Level"
+  respiratory_rate: "Respiratory Rate"
+  oxygen_saturation_percent: "Oxygen Saturation (%)"
+  age: "Age"
+  recommended_split: "Recommended Split"
+  study_group: "Study Group"
+  y_observed: "Glucose Observed"
+  steps_observed: "Steps Observed"
+  hr_observed: "HR Observed"
+  kcal_observed: "kcal_observed"
+  stress_observed: "stress_observed"
+  resp_observed: "resp_observed"
+  spo2_observed: "spo2_observed"
+
+# Database-specific configurations
+dexcom:
+  high_glucose_value: 401
+  low_glucose_value: 39
+  remove_calibration: false

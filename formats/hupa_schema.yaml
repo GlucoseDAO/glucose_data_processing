@@ -1,0 +1,29 @@
+database: hupa
+timestamp_formats:
+  - "%Y-%m-%dT%H:%M:%S"
+timestamp_output_format: "%Y-%m-%dT%H:%M:%S"
+remove_after_calibration: false
+field_categories:
+  timestamp: service
+  event_type: service
+  glucose_value_mgdl: continuous
+  long_acting_insulin_u: occasional_sum
+  fast_acting_insulin_u: occasional_sum
+  carb_grams: occasional_sum
+  heart_rate: continuous
+  step_count: occasional_sum
+  active_kcal: occasional_sum
+  basal_rate: continuous
+converters:
+  hupa:
+    timestamp_field: time
+    event_type: HUPA
+    field_mappings:
+      time: timestamp
+      glucose: glucose_value_mgdl
+      calories: active_kcal
+      heart_rate: heart_rate
+      steps: step_count
+      basal_rate: basal_rate
+      bolus_volume_delivered: fast_acting_insulin_u
+      carb_input: carb_grams

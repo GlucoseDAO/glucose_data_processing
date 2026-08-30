@@ -1,0 +1,66 @@
+# Combined configuration for HUPA, UOM, and Dexcom datasets
+# This config file defines common fields and database-specific settings
+# Reference files: glucose_config_hupa.yaml, glucose_config_uom.yaml
+
+# General preprocessing settings
+expected_interval_minutes: 5
+small_gap_max_minutes: 15
+min_sequence_len: 200
+save_intermediate_files: false
+create_fixed_frequency: true
+glucose_only: false
+calibration_period_minutes: 165 # 2h 45m
+remove_after_calibration_hours: 24
+
+# Output filtering
+restrict_output_to_config_fields: true
+service_fields_allowlist:
+  - "timestamp"
+  - "event_type"
+  - "user_id"
+
+# Field mappings configuration
+# Union of fields across supported datasets (HUPA, UOM, Dexcom)
+output_fields:
+  - "timestamp"
+  - "event_type"
+  - "user_id"
+  - "glucose_value_mgdl"
+  - "heart_rate"
+  - "step_count"
+  - "active_kcal"
+  - "stress_level"
+  - "basal_rate"
+  - "long_acting_insulin_u"
+  - "fast_acting_insulin_u"
+  - "carb_grams"
+
+# Field to display name mapping (standard_name -> display_name)
+field_to_display_name_map:
+  timestamp: "Timestamp"
+  event_type: "Event Type"
+  user_id: "User ID"
+  glucose_value_mgdl: "Glucose (mg/dL)"
+  heart_rate: "Heart Rate (bpm)"
+  step_count: "Steps"
+  active_kcal: "Calories (kcal)"
+  stress_level: "Stress"
+  basal_rate: "Basal Rate (U/h)"
+  long_acting_insulin_u: "Long-acting insulin (U)"
+  fast_acting_insulin_u: "Bolus Insulin (U)"
+  carb_grams: "Carbohydrates (g)"
+
+# Database-specific configurations
+hupa:
+  # HUPA uses semicolon delimiter in consolidated files
+  csv_delimiter: ";"
+
+dexcom:
+  # Dexcom G6 specific settings
+  high_glucose_value: 401
+  low_glucose_value: 39
+  remove_calibration: true
+
+uom:
+  # University of Manchester T1D dataset specific settings
+  # Included for consistency in multi-dataset processing
