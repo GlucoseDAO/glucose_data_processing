@@ -143,3 +143,12 @@ def test_same_timestamp_merge_keeps_every_distinct_dose() -> None:
     frame = _frames(DEXCOM_SMALL)[0]
     assert frame["fast_acting_insulin_u"].cast(pl.Float64, strict=False).sum() == pytest.approx(expected["Fast-Acting"])
     assert frame["long_acting_insulin_u"].cast(pl.Float64, strict=False).sum() == pytest.approx(expected["Long-Acting"])
+
+
+@pytest.mark.parametrize("remove_calibration", [True, False])
+def test_remove_calibration_setting_reaches_converter(remove_calibration: bool) -> None:
+    preprocessor = GlucoseMLPreprocessor(remove_calibration=remove_calibration, high_glucose_value=500)
+    converter = DatabaseDetector().get_database_converter("dexcom", preprocessor.config)
+    frame = next(iter(converter.iter_user_event_frames(DEXCOM_SMALL, interval_minutes=5)))
+    assert ("Calibration" in frame["event_type"].to_list()) is (not remove_calibration)
+    assert frame["glucose_value_mgdl"].max() == 500
