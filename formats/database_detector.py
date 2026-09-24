@@ -13,6 +13,7 @@ import zipfile
 import polars as pl
 
 from formats.database_converters import DatabaseConverter
+from formats.cgm_format_input.cgm_format_database_converter import CGM_FORMAT_DATABASE_TYPE, cgm_format_can_read
 from formats.d1namo.d1namo_converter import D1NAMO_GLUCOSE_HEADERS, D1NAMO_INSULIN_HEADERS
 from formats.jaeb.jaeb_converter import JAEB_REQUIRED_HEADERS
 from formats.shanghai.shanghai_database_converter import find_shanghai_workbooks, shanghai_cgm_column
@@ -61,12 +62,26 @@ class DatabaseDetector:
         elif database_type == 'shanghai':
             from formats.shanghai.shanghai_database_converter import ShanghaiDatabaseConverter
             return ShanghaiDatabaseConverter
+        elif database_type == CGM_FORMAT_DATABASE_TYPE:
+            from formats.cgm_format_input.cgm_format_database_converter import CgmFormatDatabaseConverter
+            return CgmFormatDatabaseConverter
         elif database_type == 'jaeb':
             from formats.jaeb.jaeb_database_converter import JaebDatabaseConverter
             return JaebDatabaseConverter
         return None
 
     def detect_database_type(self, data_folder: Union[str, Path]) -> str:
+        """
+        Detect the database type: native converters first, then the cgm_format backend
+        for inputs no native converter recognises (e.g. CGMacros, Nightscout, EU exports).
+        Native detection is unchanged, so inputs it handled keep their native output.
+        """
+        native = self._detect_native_database_type(data_folder)
+        if native == 'unknown' and cgm_format_can_read(Path(data_folder)):
+            return CGM_FORMAT_DATABASE_TYPE
+        return native
+
+    def _detect_native_database_type(self, data_folder: Union[str, Path]) -> str:
         """
         Detect the database type from the folder structure and file patterns.
         
@@ -256,4 +271,4 @@ class DatabaseDetector:
         Returns:
             List of database type names supported by this detector
         """
-        return ['dexcom', 'libre3', 'uom', 'ai_ready', 'hupa', 'uc_ht', 'medtronic', 'minidose1', 'loop', 'jaeb', 'd1namo', 'shanghai']
+        return ['dexcom', 'libre3', 'uom', 'ai_ready', 'hupa', 'uc_ht', 'medtronic', 'minidose1', 'loop', 'jaeb', 'd1namo', 'shanghai', CGM_FORMAT_DATABASE_TYPE]

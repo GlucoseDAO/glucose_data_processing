@@ -27,6 +27,38 @@ FILE_NO_HEADER = "header line not found"
 FILE_READ_ERROR = "read error"
 
 
+def group_files_by_subject(
+    root: Path, suffixes: frozenset[str] = DATA_FILE_SUFFIXES
+) -> List[Tuple[str, List[Path]]]:
+    """
+    Group data files by subject: files directly under ``root`` belong to ``root.name``,
+    files anywhere below a first-level subfolder belong to that subfolder's name.
+    Groups and files are sorted for a deterministic processing order.
+    """
+    groups: Dict[str, List[Path]] = {}
+    for data_file in sorted(root.glob("**/*")):
+        if not data_file.is_file() or data_file.suffix.lower() not in suffixes:
+            continue
+        relative = data_file.relative_to(root)
+        subject = root.name if len(relative.parts) == 1 else relative.parts[0]
+        groups.setdefault(subject, []).append(data_file)
+    return sorted(groups.items(), key=lambda item: item[0])
+
+
+def merge_same_timestamp_rows(df: pl.DataFrame) -> pl.DataFrame:
+    """
+    Collapse rows sharing (timestamp, user_id) into one, taking each column's first
+    non-null value in the frame's current order. Sorted by (timestamp, user_id).
+    """
+    group_cols = ['timestamp', 'user_id']
+    agg_exprs = [
+        pl.col(col).filter(pl.col(col).is_not_null()).first().alias(col)
+        for col in df.columns
+        if col not in group_cols
+    ]
+    return df.group_by(group_cols).agg(agg_exprs).sort(group_cols)
+
+
 class DatabaseConverter(ABC):
     """Base class for database converters."""
     
@@ -299,7 +331,7 @@ class MonoUserDatabaseConverter(DatabaseConverter):
         if not csv_path.is_dir():
             raise ValueError(f"Input must be a directory containing CSV files, got: {data_folder}")
 
-        subject_groups = self._group_files_by_subject(csv_path)
+        subject_groups = group_files_by_subject(csv_path)
         if not subject_groups:
             logger.warning(f"No CSV or TXT files found in directory: {data_folder}")
             return
@@ -327,14 +359,7 @@ class MonoUserDatabaseConverter(DatabaseConverter):
                 self.subjects_without_trace_rows += 1
                 continue
 
-            # De-duplicate records with identical timestamps within each user
-            group_cols = ['timestamp', 'user_id']
-            agg_exprs = [
-                pl.col(col).filter(pl.col(col).is_not_null()).first().alias(col)
-                for col in df.columns
-                if col not in group_cols
-            ]
-            df = df.group_by(group_cols).agg(agg_exprs).sort(group_cols)
+            df = merge_same_timestamp_rows(df)
 
             user_frames = df.partition_by('user_id', as_dict=True, maintain_order=True)
             for (user_id,), user_df in sorted(user_frames.items(), key=lambda item: item[0]):
@@ -348,21 +373,6 @@ class MonoUserDatabaseConverter(DatabaseConverter):
         """
         return df
 
-    @staticmethod
-    def _group_files_by_subject(root: Path) -> List[Tuple[str, List[Path]]]:
-        """
-        Group data files by subject: files directly under ``root`` belong to ``root.name``,
-        files anywhere below a first-level subfolder belong to that subfolder's name.
-        Groups and files are sorted for a deterministic processing order.
-        """
-        groups: Dict[str, List[Path]] = {}
-        for data_file in sorted(root.glob("**/*")):
-            if not data_file.is_file() or data_file.suffix.lower() not in DATA_FILE_SUFFIXES:
-                continue
-            relative = data_file.relative_to(root)
-            subject = root.name if len(relative.parts) == 1 else relative.parts[0]
-            groups.setdefault(subject, []).append(data_file)
-        return sorted(groups.items(), key=lambda item: item[0])
 
     def _apply_database_specific_processing(self, df: pl.DataFrame) -> pl.DataFrame:
         """
