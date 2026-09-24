@@ -327,10 +327,14 @@ class MonoUserDatabaseConverter(DatabaseConverter):
                 self.subjects_without_trace_rows += 1
                 continue
 
-            # De-duplicate records with identical timestamps within each user
+            # De-duplicate records with identical timestamps within each user. Row converters
+            # write "" for fields a row does not carry (an EGV row's insulin), so "" must not
+            # count as a value, or it wins over a real dose in another row at that timestamp.
             group_cols = ['timestamp', 'user_id']
             agg_exprs = [
-                pl.col(col).filter(pl.col(col).is_not_null()).first().alias(col)
+                pl.col(col).filter(pl.col(col).is_not_null() & (pl.col(col) != "")).first().alias(col)
+                if df.schema[col] == pl.String
+                else pl.col(col).filter(pl.col(col).is_not_null()).first().alias(col)
                 for col in df.columns
                 if col not in group_cols
             ]

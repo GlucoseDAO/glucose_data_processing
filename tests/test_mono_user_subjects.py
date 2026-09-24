@@ -127,3 +127,19 @@ def test_dexcom_high_low_mapped_and_calibration_removed() -> None:
     assert (glucose == 401).sum() == n_high + (numeric_src == 401).sum()
     assert (glucose == 39).sum() == n_low + (numeric_src == 39).sum()
     assert "Calibration" not in frame["event_type"].to_list()
+
+
+def test_same_timestamp_merge_keeps_every_distinct_dose() -> None:
+    timestamp = "Timestamp (YYYY-MM-DDThh:mm:ss)"
+    source = pl.concat([pl.read_csv(f, infer_schema=False) for f in sorted(DEXCOM_SMALL.glob("*.csv"))])
+    doses = (
+        source.filter(pl.col("Event Type") == "Insulin")
+        .with_columns(pl.col("Insulin Value (u)").cast(pl.Float64))
+        # Consecutive exports overlap in time, so the same dose can appear in two files.
+        .unique([timestamp, "Event Subtype", "Insulin Value (u)"])
+    )
+    expected = dict(doses.group_by("Event Subtype").agg(pl.col("Insulin Value (u)").sum()).rows())
+
+    frame = _frames(DEXCOM_SMALL)[0]
+    assert frame["fast_acting_insulin_u"].cast(pl.Float64, strict=False).sum() == pytest.approx(expected["Fast-Acting"])
+    assert frame["long_acting_insulin_u"].cast(pl.Float64, strict=False).sum() == pytest.approx(expected["Long-Acting"])
