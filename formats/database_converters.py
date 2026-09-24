@@ -45,20 +45,37 @@ def group_files_by_subject(
     return sorted(groups.items(), key=lambda item: item[0])
 
 
+# Event quantities that add up when several rows share a timestamp (two doses entered at
+# the same minute are two doses). Everything else keeps its first value.
+SUMMED_EVENT_FIELDS: frozenset[str] = frozenset({"fast_acting_insulin_u", "long_acting_insulin_u", "carb_grams"})
+
+
 def merge_same_timestamp_rows(df: pl.DataFrame) -> pl.DataFrame:
     """
-    Collapse rows sharing (timestamp, user_id) into one, taking each column's first
-    non-null value in the frame's current order. Sorted by (timestamp, user_id).
+    Collapse rows sharing (timestamp, user_id) into one, sorted by (timestamp, user_id).
+
+    - Exact duplicate rows are dropped first: consecutive exports overlap in time, so the
+      same record can arrive twice.
+    - ``SUMMED_EVENT_FIELDS`` are summed over the remaining rows (null if none has a value).
+    - Every other column takes its first value in the frame's current order.
 
     Row converters write "" for fields a row does not carry (an EGV row's insulin), so in
-    string columns "" does not count as a value; otherwise it wins over a real dose in
-    another row at the same timestamp.
+    string columns "" is treated as missing; otherwise it would win over a real value.
     """
     group_cols = ['timestamp', 'user_id']
+    df = df.with_columns(
+        [pl.col(c).cast(pl.Float64, strict=False) for c in df.columns if c in SUMMED_EVENT_FIELDS]
+    ).with_columns(
+        [pl.col(c).replace("", None) for c, dtype in df.schema.items() if dtype == pl.String and c not in SUMMED_EVENT_FIELDS]
+    ).unique(maintain_order=True)
+
+    def present(col: str) -> pl.Expr:
+        return pl.col(col).filter(pl.col(col).is_not_null())
+
     agg_exprs = [
-        pl.col(col).filter(pl.col(col).is_not_null() & (pl.col(col) != "")).first().alias(col)
-        if df.schema[col] == pl.String
-        else pl.col(col).filter(pl.col(col).is_not_null()).first().alias(col)
+        pl.when(pl.col(col).is_not_null().any()).then(pl.col(col).sum()).alias(col)
+        if col in SUMMED_EVENT_FIELDS
+        else present(col).first().alias(col)
         for col in df.columns
         if col not in group_cols
     ]
