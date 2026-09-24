@@ -22,6 +22,7 @@ import polars as pl
 from cgm_format import (
     CGMACROS_MEAN_TRACK,
     CGMACROS_TRACKS,
+    CGM_SCHEMA,
     FormatParser,
     MalformedDataError,
     Quality,
@@ -43,6 +44,9 @@ from formats.database_converters import (
 from formats.glucose_bounds import dexcom_style_bounds
 
 CGM_FORMAT_DATABASE_TYPE = "cgm_format"
+UNIFIED_SERVICE_COLUMNS: frozenset[str] = frozenset(CGM_SCHEMA.get_column_names(data_only=False)) - frozenset(
+    CGM_SCHEMA.get_column_names(data_only=True)
+)
 CGM_FORMAT_CONFIG_KEY = "cgm_format"
 CGM_FORMAT_TRACK_KEY = "track"
 MULTI_TRACK_FORMATS: frozenset[SupportedCGMFormat] = frozenset({SupportedCGMFormat.CGMACROS})
@@ -156,7 +160,13 @@ class CgmFormatDatabaseConverter(DatabaseConverter):
                 if frame is not None:
                     parsed.append(frame)
             if parsed:
-                subjects[subject] = pl.concat(parsed, how="diagonal_relaxed")
+                # Files are parsed one at a time, so a record repeated in two overlapping
+                # exports arrives twice. Identical data columns and event type make a true
+                # duplicate (cgm_format's primary key); service columns such as sequence_id
+                # are assigned per file and must not keep the copies apart.
+                frame = pl.concat(parsed, how="diagonal_relaxed")
+                key = [c for c in frame.columns if c not in UNIFIED_SERVICE_COLUMNS or c == "event_type"]
+                subjects[subject] = frame.unique(subset=key, keep="first", maintain_order=True)
         return subjects
 
     def _parse_export(self, file_path: Path) -> Optional[pl.DataFrame]:
@@ -205,4 +215,7 @@ class CgmFormatDatabaseConverter(DatabaseConverter):
         df = df.filter(~is_non_trace_glucose).sort(
             ["timestamp", pl.col("event_type") != NATIVE_TRACE_EVENT], maintain_order=True
         )
-        return merge_same_timestamp_rows(df)
+        # cgm_format already de-duplicated on its own primary key, which includes columns
+        # dropped above (food names, calories); two identical items eaten together would
+        # otherwise collapse into one here.
+        return merge_same_timestamp_rows(df, drop_exact_duplicates=False)

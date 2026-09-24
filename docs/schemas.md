@@ -62,4 +62,5 @@ converters:
 - `jaeb_schema.yaml`: JAEB comma-separated CGM device tables (e.g. Shah non-diabetic cohort).
 - `d1namo_schema.yaml`: D1NAMO (CGM in mmol/L, insulin).
 - `shanghai_schema.yaml`: ShanghaiT1DM/T2DM Excel workbooks (CGM only).
+- `cgm_format_schema.yaml`: inputs read through the cgm-format library.
 

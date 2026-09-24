@@ -50,12 +50,14 @@ def group_files_by_subject(
 SUMMED_EVENT_FIELDS: frozenset[str] = frozenset({"fast_acting_insulin_u", "long_acting_insulin_u", "carb_grams"})
 
 
-def merge_same_timestamp_rows(df: pl.DataFrame) -> pl.DataFrame:
+def merge_same_timestamp_rows(df: pl.DataFrame, *, drop_exact_duplicates: bool = True) -> pl.DataFrame:
     """
     Collapse rows sharing (timestamp, user_id) into one, sorted by (timestamp, user_id).
 
-    - Exact duplicate rows are dropped first: consecutive exports overlap in time, so the
-      same record can arrive twice.
+    - Exact duplicate rows are dropped first (``drop_exact_duplicates``): consecutive exports
+      overlap in time, so the same record can arrive twice. Pass False when the rows were
+      projected from a richer frame whose own duplicate handling already ran, since two
+      real events can become identical once the columns that told them apart are gone.
     - ``SUMMED_EVENT_FIELDS`` are summed over the remaining rows (null if none has a value).
     - Every other column takes its first value in the frame's current order.
 
@@ -67,7 +69,9 @@ def merge_same_timestamp_rows(df: pl.DataFrame) -> pl.DataFrame:
         [pl.col(c).cast(pl.Float64, strict=False) for c in df.columns if c in SUMMED_EVENT_FIELDS]
     ).with_columns(
         [pl.col(c).replace("", None) for c, dtype in df.schema.items() if dtype == pl.String and c not in SUMMED_EVENT_FIELDS]
-    ).unique(maintain_order=True)
+    )
+    if drop_exact_duplicates:
+        df = df.unique(maintain_order=True)
 
     def present(col: str) -> pl.Expr:
         return pl.col(col).filter(pl.col(col).is_not_null())

@@ -64,5 +64,7 @@ uc_ht:
   # UC_HT dataset specific settings
 ```
 
-The supported database keys are: `dexcom`, `libre3`, `uom`, `hupa`, `uc_ht`, `medtronic`, `minidose1`, `loop`, `ai_ready`, `jaeb`, `d1namo`, `shanghai`. The `dexcom` bounds
+The supported database keys are: `dexcom`, `libre3`, `uom`, `hupa`, `uc_ht`, `medtronic`, `minidose1`, `loop`, `ai_ready`, `jaeb`, `d1namo`, `shanghai`, `cgm_format`.
+`cgm_format.track` (`libre`, `dexcom` or `mean`) is required when a CGMacros corpus is read
+through the cgm_format backend. The `dexcom` bounds
 (`high_glucose_value`, `low_glucose_value`) are also used for AI-READI's Dexcom `High`/`Low` readings.
