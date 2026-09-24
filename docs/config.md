@@ -64,4 +64,5 @@ uc_ht:
   # UC_HT dataset specific settings
 ```
 
-The supported database keys are: `dexcom`, `libre3`, `uom`, `hupa`, `uc_ht`, `medtronic`, `minidose1`, `loop`, `ai_ready`.
+The supported database keys are: `dexcom`, `libre3`, `uom`, `hupa`, `uc_ht`, `medtronic`, `minidose1`, `loop`, `ai_ready`, `jaeb`, `d1namo`, `shanghai`. The `dexcom` bounds
+(`high_glucose_value`, `low_glucose_value`) are also used for AI-READI's Dexcom `High`/`Low` readings.

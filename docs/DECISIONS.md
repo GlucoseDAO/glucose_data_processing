@@ -27,7 +27,7 @@ folder's name. One frame is yielded per user.
 now becomes two users. Pass the subject folder itself in that case. Folder names become
 `user_id` values, so do not name export folders after patients.
 
-## D2 — CGM-only rows from JAEB and D1NAMO exports (2026-09-24)
+## D2 — CGM-only rows from JAEB, D1NAMO and Shanghai exports (2026-09-24)
 
 The pipeline treats every row with a glucose value as part of the CGM trace; it does not
 look at `event_type`. JAEB `Calibration`/`bgm` rows, D1NAMO `manual` fingersticks and Shanghai `CBG` would

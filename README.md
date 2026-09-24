@@ -85,6 +85,16 @@ The project supports multiple CGM data formats. See [docs/datasets.csv](docs/dat
 | `dexcom` | Dexcom G6 | Standardized export format from Dexcom receivers |
 | `libre3` | FreeStyle Libre 3 | Abbott's CGM data format |
 | `medtronic` | Medtronic | Medtronic pump/CGM export format |
+| `jaeb` | JAEB device tables, e.g. [Shah healthy non-diabetic](https://public.jaeb.org) | Comma-separated `PtID,DeviceDtDaysFromEnroll,DeviceTm,RecordType,Value` CGM tables |
+| `d1namo` | [D1NAMO](https://doi.org/10.1016/j.imu.2018.09.003) | T1D subset: CGM (mmol/L) and insulin, one folder per subject |
+| `shanghai` | [ShanghaiT1DM/T2DM](https://figshare.com/articles/dataset/diabetes_datasets_zip/21600933) | One Excel workbook per patient period, 15-minute CGM (use `--interval 15`) |
+
+Folder-based formats (Dexcom, Libre3, Medtronic, D1NAMO) treat each first-level subfolder of
+the input as one subject, named after the folder, so a cohort root with one folder per
+subject can be passed directly. Files directly in the input folder belong to a subject named
+after that folder. Formats whose rows carry a participant id (MiniDose1, JAEB) use it instead.
+A folder in which no file matches the detected format is refused with a message saying how
+many files matched, rather than processed into an empty or merged output.
 
 ### Downloading Datasets
 
