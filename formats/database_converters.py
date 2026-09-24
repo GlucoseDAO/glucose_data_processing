@@ -49,10 +49,16 @@ def merge_same_timestamp_rows(df: pl.DataFrame) -> pl.DataFrame:
     """
     Collapse rows sharing (timestamp, user_id) into one, taking each column's first
     non-null value in the frame's current order. Sorted by (timestamp, user_id).
+
+    Row converters write "" for fields a row does not carry (an EGV row's insulin), so in
+    string columns "" does not count as a value; otherwise it wins over a real dose in
+    another row at the same timestamp.
     """
     group_cols = ['timestamp', 'user_id']
     agg_exprs = [
-        pl.col(col).filter(pl.col(col).is_not_null()).first().alias(col)
+        pl.col(col).filter(pl.col(col).is_not_null() & (pl.col(col) != "")).first().alias(col)
+        if df.schema[col] == pl.String
+        else pl.col(col).filter(pl.col(col).is_not_null()).first().alias(col)
         for col in df.columns
         if col not in group_cols
     ]

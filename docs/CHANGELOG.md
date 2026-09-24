@@ -25,6 +25,10 @@ Faults reported by the MetaboNet data seat against commit 8f79f45.
   fingersticks stayed in the trace. `test_data/dexcom_small`: 31 readings at 401 and 4 at
   39 now survive, 6 calibration rows are gone.
 - The streaming writer kept losing the CSV header when the first user's output was empty.
+- Folder-based converters lost insulin and carb values when another row shared the
+  timestamp: row converters write `""` for absent fields, and the same-timestamp merge took
+  `""` as the first value. `test_data/dexcom_small` output: fast insulin 958.5 -> 1058.5 U,
+  long-acting 905 -> 918 U; glucose unchanged.
 
 ### Added
 - `jaeb` format for comma-separated JAEB CGM device tables (Shah healthy non-diabetic).
