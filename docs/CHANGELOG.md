@@ -2,6 +2,19 @@
 
 Newest first.
 
+## Unreleased — cgm_format input backend (2026-09-24)
+
+### Added
+- `cgm_format` database type: inputs no native converter recognises are read through
+  `cgm-format` 0.12.2 (CGMacros, Nightscout, EU Dexcom/Libre exports, and its corpora).
+  CGMacros requires `cgm_format.track`.
+- `docs/CGM_FORMAT_PARITY.md` ledger and `scripts/cgm_format_parity.py`; parity with native
+  converters is asserted in `tests/test_cgm_format_parity.py` (docs/DECISIONS.md D3).
+
+### Changed
+- polars 1.34 -> 1.44 (required by cgm-format). Real-data outputs byte-identical; the
+  `explode` deprecation is pinned.
+
 ## Unreleased — 2026-09-24
 
 Faults reported by the MetaboNet data seat against commit 8f79f45.

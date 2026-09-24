@@ -27,17 +27,37 @@ FILE_NO_HEADER = "header line not found"
 FILE_READ_ERROR = "read error"
 
 
+def group_files_by_subject(
+    root: Path, suffixes: frozenset[str] = DATA_FILE_SUFFIXES
+) -> List[Tuple[str, List[Path]]]:
+    """
+    Group data files by subject: files directly under ``root`` belong to ``root.name``,
+    files anywhere below a first-level subfolder belong to that subfolder's name.
+    Groups and files are sorted for a deterministic processing order.
+    """
+    groups: Dict[str, List[Path]] = {}
+    for data_file in sorted(root.glob("**/*")):
+        if not data_file.is_file() or data_file.suffix.lower() not in suffixes:
+            continue
+        relative = data_file.relative_to(root)
+        subject = root.name if len(relative.parts) == 1 else relative.parts[0]
+        groups.setdefault(subject, []).append(data_file)
+    return sorted(groups.items(), key=lambda item: item[0])
+
+
 # Event quantities that add up when several rows share a timestamp (two doses entered at
 # the same minute are two doses). Everything else keeps its first value.
 SUMMED_EVENT_FIELDS: frozenset[str] = frozenset({"fast_acting_insulin_u", "long_acting_insulin_u", "carb_grams"})
 
 
-def merge_same_timestamp_rows(df: pl.DataFrame) -> pl.DataFrame:
+def merge_same_timestamp_rows(df: pl.DataFrame, *, drop_exact_duplicates: bool = True) -> pl.DataFrame:
     """
     Collapse rows sharing (timestamp, user_id) into one, sorted by (timestamp, user_id).
 
-    - Exact duplicate rows are dropped first: consecutive exports overlap in time, so the
-      same record can arrive twice.
+    - Exact duplicate rows are dropped first (``drop_exact_duplicates``): consecutive exports
+      overlap in time, so the same record can arrive twice. Pass False when the rows were
+      projected from a richer frame whose own duplicate handling already ran, since two
+      real events can become identical once the columns that told them apart are gone.
     - ``SUMMED_EVENT_FIELDS`` are summed over the remaining rows (null if none has a value).
     - Every other column takes its first value in the frame's current order.
 
@@ -49,7 +69,9 @@ def merge_same_timestamp_rows(df: pl.DataFrame) -> pl.DataFrame:
         [pl.col(c).cast(pl.Float64, strict=False) for c in df.columns if c in SUMMED_EVENT_FIELDS]
     ).with_columns(
         [pl.col(c).replace("", None) for c, dtype in df.schema.items() if dtype == pl.String and c not in SUMMED_EVENT_FIELDS]
-    ).unique(maintain_order=True)
+    )
+    if drop_exact_duplicates:
+        df = df.unique(maintain_order=True)
 
     def present(col: str) -> pl.Expr:
         return pl.col(col).filter(pl.col(col).is_not_null())
@@ -336,7 +358,7 @@ class MonoUserDatabaseConverter(DatabaseConverter):
         if not csv_path.is_dir():
             raise ValueError(f"Input must be a directory containing CSV files, got: {data_folder}")
 
-        subject_groups = self._group_files_by_subject(csv_path)
+        subject_groups = group_files_by_subject(csv_path)
         if not subject_groups:
             logger.warning(f"No CSV or TXT files found in directory: {data_folder}")
             return
@@ -378,21 +400,6 @@ class MonoUserDatabaseConverter(DatabaseConverter):
         """
         return df
 
-    @staticmethod
-    def _group_files_by_subject(root: Path) -> List[Tuple[str, List[Path]]]:
-        """
-        Group data files by subject: files directly under ``root`` belong to ``root.name``,
-        files anywhere below a first-level subfolder belong to that subfolder's name.
-        Groups and files are sorted for a deterministic processing order.
-        """
-        groups: Dict[str, List[Path]] = {}
-        for data_file in sorted(root.glob("**/*")):
-            if not data_file.is_file() or data_file.suffix.lower() not in DATA_FILE_SUFFIXES:
-                continue
-            relative = data_file.relative_to(root)
-            subject = root.name if len(relative.parts) == 1 else relative.parts[0]
-            groups.setdefault(subject, []).append(data_file)
-        return sorted(groups.items(), key=lambda item: item[0])
 
     def _apply_database_specific_processing(self, df: pl.DataFrame) -> pl.DataFrame:
         """

@@ -112,3 +112,8 @@ assert source_ids == output_ids
 # GOOD: Domain knowledge constants (from spec, not data inspection)
 assert valid_states == {"active", "inactive", "pending"}  # from API spec
 ```
+
+## API notes (learned)
+
+- **Polars `explode`**: since polars 1.4x, calling `DataFrame.explode()` / `Expr.explode()` without `empty_as_null` warns that the default flips to `False` in 2.0. Pass it explicitly (`empty_as_null=True` keeps the current behaviour). Run `uv run pytest -W error::DeprecationWarning` after a polars bump to catch the next one.
+- **Timestamps from Excel/foreign frames**: the pipeline joins on `Datetime("us")`. Cast any timestamp built outside the CSV string path (Excel, `cgm_format` frames) to `pl.Datetime("us")` before yielding, or the gap detector fails with a join-key dtype mismatch.

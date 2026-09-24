@@ -87,6 +87,7 @@ The project supports multiple CGM data formats. See [docs/datasets.csv](docs/dat
 | `medtronic` | Medtronic | Medtronic pump/CGM export format |
 | `jaeb` | JAEB device tables, e.g. [Shah healthy non-diabetic](https://public.jaeb.org) | Comma-separated `PtID,DeviceDtDaysFromEnroll,DeviceTm,RecordType,Value` CGM tables |
 | `d1namo` | [D1NAMO](https://doi.org/10.1016/j.imu.2018.09.003) | T1D subset: CGM (mmol/L) and insulin, one folder per subject |
+| `cgm_format` | Anything [cgm-format](https://github.com/GlucoseDAO/cgm_format) reads that no native converter does: CGMacros, Nightscout, EU Dexcom/Libre exports | Used automatically as a fallback; CGMacros needs `cgm_format.track` (see `formats/cgm_format_input/CGM_FORMAT.md`) |
 | `shanghai` | [ShanghaiT1DM/T2DM](https://figshare.com/articles/dataset/diabetes_datasets_zip/21600933) | One Excel workbook per patient period, 15-minute CGM (use `--interval 15`) |
 
 Folder-based formats (Dexcom, Libre3, Medtronic, D1NAMO) treat each first-level subfolder of
