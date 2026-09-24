@@ -388,6 +388,11 @@ class StatsManager:
             
         return aggregated
 
+def _fmt_number(value: Optional[Union[int, float]], spec: str) -> str:
+    """Format a statistic, rendering a missing value (no sequences survived) as N/A."""
+    return "N/A" if value is None else format(value, spec)
+
+
 def print_statistics(stats: Dict[str, Any], preprocessor_params: Optional[Dict[str, Any]] = None) -> str:
     """
     Print formatted statistics and return as string.
@@ -438,12 +443,12 @@ def print_statistics(stats: Dict[str, Any], preprocessor_params: Optional[Dict[s
     
     seq_analysis = stats.get('sequence_analysis', {})
     lines.append(f"\nSEQUENCE ANALYSIS:")
-    lines.append(f"   Longest Sequence: {seq_analysis.get('longest_sequence', 0):,} records")
-    lines.append(f"   Shortest Sequence: {seq_analysis.get('shortest_sequence', 0):,} records")
+    lines.append(f"   Longest Sequence: {_fmt_number(seq_analysis.get('longest_sequence', 0), ',')} records")
+    lines.append(f"   Shortest Sequence: {_fmt_number(seq_analysis.get('shortest_sequence', 0), ',')} records")
     
     seq_lengths = seq_analysis.get('sequence_lengths', {})
-    lines.append(f"   Average Sequence Length: {seq_lengths.get('mean', 0):.1f} records")
-    lines.append(f"   Median Sequence Length: {seq_lengths.get('50%', 0):.1f} records")
+    lines.append(f"   Average Sequence Length: {_fmt_number(seq_lengths.get('mean', 0), '.1f')} records")
+    lines.append(f"   Median Sequence Length: {_fmt_number(seq_lengths.get('50%', 0), '.1f')} records")
     
     gap_analysis = stats.get('gap_analysis', {})
     if gap_analysis:

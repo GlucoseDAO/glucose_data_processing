@@ -120,8 +120,10 @@ class DatabaseDetector:
         for data_file in all_files:
             filename = data_file.stem.lower()
             
-            # Check for Dexcom patterns (standard format files)
-            if any(pattern in filename for pattern in ['dexcom', 'g6', 'cgm']):
+            # Only an explicit 'dexcom' in the name is a Dexcom hint. Generic 'cgm'/'g6' substrings
+            # also occur in CGMacros-0xx.csv, NonDiabDeviceCGM.csv, IDataCGM.txt and others, so
+            # those files fall through to header sniffing below.
+            if 'dexcom' in filename:
                 file_patterns['dexcom'] += 1
             elif any(pattern in filename for pattern in ['libre', 'freestyle']):
                 file_patterns['libre3'] += 1

@@ -675,6 +675,13 @@ class GlucoseMLPreprocessor:
 
         flush()
 
+        if total_users_processed == 0:
+            raise ValueError(
+                f"No user data produced from {data_folder} as database type '{database_type}': "
+                f"{database_converter.describe_file_report()}. "
+                f"Check that the folder really holds {database_type} exports."
+            )
+
         # Use StatsManager to aggregate all collected user statistics
         if all_user_stats:
             stats = self.stats_manager.aggregate_statistics(all_user_stats, [dataset_name or "User"] * len(all_user_stats))
