@@ -370,7 +370,15 @@ class GlucoseMLPreprocessor:
         self.max_workers: int = max_workers if max_workers is not None else (os.cpu_count() or 1)
         if first_n_users is not None:
             self.config['first_n_users'] = first_n_users
-        
+        # Database converters read these from config['dexcom'] (dexcom_style_bounds,
+        # DexcomDatabaseConverter), so the resolved CLI/constructor values must land there.
+        self.config['dexcom'] = {
+            **(self.config.get('dexcom') or {}),
+            'remove_calibration': remove_calibration,
+            'high_glucose_value': high_glucose_value,
+            'low_glucose_value': low_glucose_value,
+        }
+
         # Ensure round_precision is in config for sub-components
         if 'round_precision' not in self.config:
             self.config['round_precision'] = self.round_precision
