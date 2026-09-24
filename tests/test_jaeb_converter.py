@@ -2,7 +2,8 @@
 """
 JAEB comma-separated device tables (``PtID,DeviceDtDaysFromEnroll,DeviceTm,RecordType,Value``).
 
-``test_data/jaeb_small`` is an excerpt of three participants from the Shah healthy
+``test_data/jaeb_small`` is an excerpt of four participants (one with meter and CGM
+readings in the same second) from the Shah healthy
 non-diabetic cohort (JAEB public dataset CGMND). Expected values are read from it at runtime.
 """
 

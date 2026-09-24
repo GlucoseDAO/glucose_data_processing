@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Union
 import zipfile
 
 from formats.database_converters import DatabaseConverter
+from formats.d1namo.d1namo_converter import D1NAMO_GLUCOSE_HEADERS, D1NAMO_INSULIN_HEADERS
 from formats.jaeb.jaeb_converter import JAEB_REQUIRED_HEADERS
 
 
@@ -51,6 +52,9 @@ class DatabaseDetector:
         elif database_type == 'loop':
             from formats.loop.loop_database_converter import LoopDatabaseConverter
             return LoopDatabaseConverter
+        elif database_type == 'd1namo':
+            from formats.d1namo.d1namo_database_converter import D1namoDatabaseConverter
+            return D1namoDatabaseConverter
         elif database_type == 'jaeb':
             from formats.jaeb.jaeb_database_converter import JaebDatabaseConverter
             return JaebDatabaseConverter
@@ -64,7 +68,7 @@ class DatabaseDetector:
             data_folder: Path to the data folder to analyze
             
         Returns:
-            Database type string ('dexcom', 'libre3', 'uom', 'uc_ht', 'medtronic', 'hupa', 'loop', 'minidose1', 'jaeb', or 'unknown')
+            Database type string ('dexcom', 'libre3', 'uom', 'uc_ht', 'medtronic', 'hupa', 'loop', 'minidose1', 'jaeb', 'd1namo', or 'unknown')
         """
         data_path = Path(data_folder)
         
@@ -120,6 +124,7 @@ class DatabaseDetector:
             'minidose1': 0,
             'loop': 0,
             'jaeb': 0,
+            'd1namo': 0,
         }
         
         for data_file in all_files:
@@ -191,6 +196,11 @@ class DatabaseDetector:
                                 file_patterns['jaeb'] += 1
                                 break
 
+                        # Check for D1NAMO glucose/insulin tables (only the first line is a header)
+                        header_cells = {c.strip() for c in first_lines[0].split(',')} if first_lines else set()
+                        if D1NAMO_GLUCOSE_HEADERS.issubset(header_cells) or D1NAMO_INSULIN_HEADERS.issubset(header_cells):
+                            file_patterns['d1namo'] += 1
+
                         # Check for Loop format headers
                         for line in first_lines:
                             if 'PtID|' in line and 'UTCDtTm' in line and ('CGMVal' in line or 'Normal' in line or 'Rate' in line or 'CarbsNet' in line):
@@ -235,4 +245,4 @@ class DatabaseDetector:
         Returns:
             List of database type names supported by this detector
         """
-        return ['dexcom', 'libre3', 'uom', 'ai_ready', 'hupa', 'uc_ht', 'medtronic', 'minidose1', 'loop', 'jaeb']
+        return ['dexcom', 'libre3', 'uom', 'ai_ready', 'hupa', 'uc_ht', 'medtronic', 'minidose1', 'loop', 'jaeb', 'd1namo']

@@ -659,6 +659,7 @@ class GlucoseMLPreprocessor:
         # no Windows non-paged pool exhaustion. Polars releases the GIL so threads
         # run in parallel for Polars-heavy steps.
         max_workers = self.max_workers
+        users_emptied_by_filtering = 0
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             max_active_tasks = max_workers
             futures = []
@@ -666,6 +667,7 @@ class GlucoseMLPreprocessor:
             typed_iter_fn = cast(Iterable[pl.DataFrame], iter_fn(data_folder, interval_minutes=self.expected_interval_minutes))
             for user_df in typed_iter_fn:
                 if len(user_df) == 0:
+                    users_emptied_by_filtering += 1
                     continue
                 
                 futures.append(executor.submit(
@@ -688,8 +690,14 @@ class GlucoseMLPreprocessor:
         if total_users_processed == 0:
             raise ValueError(
                 f"No user data produced from {data_folder} as database type '{database_type}': "
-                f"{database_converter.describe_file_report()}. "
-                f"Check that the folder really holds {database_type} exports."
+                f"{database_converter.describe_file_report()}"
+                + (
+                    f"; {users_emptied_by_filtering} user(s) had no rows left after "
+                    f"{database_type}-specific filtering"
+                    if users_emptied_by_filtering
+                    else ""
+                )
+                + f". Check that the folder really holds {database_type} exports with usable glucose rows."
             )
 
         # Use StatsManager to aggregate all collected user statistics

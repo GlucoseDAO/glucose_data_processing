@@ -24,6 +24,7 @@ from formats.loop.loop_converter import LoopConverter
 from formats.medtronic.medtronic_converter import MedtronicConverter
 from formats.minidose1.minidose1_converter import Minidose1Converter
 from formats.jaeb.jaeb_converter import JaebConverter
+from formats.d1namo.d1namo_converter import D1namoConverter
 
 
 class CSVFormatDetector:
@@ -56,6 +57,7 @@ class CSVFormatDetector:
             MedtronicConverter(self.output_fields),
             Minidose1Converter(self.output_fields),
             JaebConverter(self.output_fields),
+            D1namoConverter(self.output_fields),
         ]
         return converters
     

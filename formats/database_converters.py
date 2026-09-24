@@ -46,6 +46,8 @@ class DatabaseConverter(ABC):
         self.format_detector = CSVFormatDetector(output_fields)
         # How each examined data file fared, keyed by one of the FILE_* reasons.
         self.file_report: Counter[str] = Counter()
+        # Subjects whose rows were all removed by database-specific filtering.
+        self.subjects_without_trace_rows: int = 0
 
     def describe_file_report(self) -> str:
         """Summarise how many examined files matched a converter, grouped by reason."""
@@ -54,7 +56,13 @@ class DatabaseConverter(ABC):
         others = ", ".join(
             f"{reason}: {count}" for reason, count in sorted(self.file_report.items()) if reason != FILE_MATCHED
         )
-        return f"{matched} of {total} data files matched a converter" + (f" ({others})" if others else "")
+        report = f"{matched} of {total} data files matched a converter" + (f" ({others})" if others else "")
+        if self.subjects_without_trace_rows:
+            report += (
+                f"; {self.subjects_without_trace_rows} subject folder(s) had no rows left after "
+                f"{self.database_type}-specific filtering"
+            )
+        return report
 
     def _read_converted_rows(self, file_path: Path) -> List[Dict[str, Any]]:
         """
@@ -312,6 +320,12 @@ class MonoUserDatabaseConverter(DatabaseConverter):
 
             df = self._enforce_output_schema(self._records_to_frame(records))
             df = self._parse_timestamps(df)
+            # Before de-duplication, so a dropped row cannot lend its event_type to a kept
+            # row that shares its timestamp.
+            df = self._drop_non_trace_rows(df)
+            if df.height == 0:
+                self.subjects_without_trace_rows += 1
+                continue
 
             # De-duplicate records with identical timestamps within each user
             group_cols = ['timestamp', 'user_id']
@@ -326,6 +340,13 @@ class MonoUserDatabaseConverter(DatabaseConverter):
             for (user_id,), user_df in sorted(user_frames.items(), key=lambda item: item[0]):
                 logger.info(f"Consolidated {len(user_df):,} records for user {user_id}")
                 yield self._apply_database_specific_processing(user_df)
+
+    def _drop_non_trace_rows(self, df: pl.DataFrame) -> pl.DataFrame:
+        """
+        Remove converted rows that must not reach the glucose trace (overridden by
+        subclasses). Runs on string columns, before per-timestamp de-duplication.
+        """
+        return df
 
     @staticmethod
     def _group_files_by_subject(root: Path) -> List[Tuple[str, List[Path]]]:

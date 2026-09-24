@@ -4,7 +4,7 @@
 
 Several JAEB Center for Health Research public datasets ship device data as comma-separated
 tables. The converter was built against the Shah healthy non-diabetic cohort (CGMND,
-`NonDiabDeviceCGM.csv`, `NonDiabDeviceBGM.csv`); `test_data/jaeb_small` holds three of its
+`NonDiabDeviceCGM.csv`, `NonDiabDeviceBGM.csv`); `test_data/jaeb_small` holds four of its
 participants.
 
 ## Layout

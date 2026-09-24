@@ -1,0 +1,22 @@
+database: d1namo
+timestamp_formats:
+  - "%Y-%m-%dT%H:%M:%S"
+timestamp_output_format: "%Y-%m-%dT%H:%M:%S"
+remove_after_calibration: false
+field_categories:
+  timestamp: service
+  event_type: service
+  glucose_value_mgdl: continuous
+  fast_acting_insulin_u: occasional_sum
+  long_acting_insulin_u: occasional_sum
+  user_id: service
+converters:
+  glucose:
+    timestamp_field: timestamp
+    field_mappings:
+      glucose: glucose_value_mgdl
+  insulin:
+    timestamp_field: timestamp
+    field_mappings:
+      fast_insulin: fast_acting_insulin_u
+      slow_insulin: long_acting_insulin_u
