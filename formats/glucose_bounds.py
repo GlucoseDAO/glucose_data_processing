@@ -7,6 +7,9 @@ from typing import Any, Dict, Tuple
 DEFAULT_LOW_GLUCOSE_MGDL: float = 39.0
 DEFAULT_HIGH_GLUCOSE_MGDL: float = 401.0
 
+# Glucose unit conversion used by every mmol/L source (UoM, D1NAMO): mg/dL = mmol/L * 18.
+MGDL_PER_MMOL: float = 18.0
+
 
 def dexcom_style_bounds(config: Dict[str, Any] | None) -> Tuple[float, float]:
     """

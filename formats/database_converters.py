@@ -6,13 +6,62 @@ This module provides converters that handle the consolidation and processing
 of different database structures (mono-user vs multi-user).
 """
 
+import csv
 from abc import ABC, abstractmethod
+from collections import Counter
+from io import StringIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union, Iterable
 import polars as pl
 from loguru import logger
 from formats.base_converter import CSVFormatConverter
 from formats.format_detector import CSVFormatDetector
+
+
+DATA_FILE_SUFFIXES: frozenset[str] = frozenset({".csv", ".txt"})
+
+# Reasons a data file contributed no rows, used for the aggregated end-of-run report.
+FILE_MATCHED = "matched a converter"
+FILE_NO_CONVERTER = "no converter recognised the header"
+FILE_NO_HEADER = "header line not found"
+FILE_READ_ERROR = "read error"
+
+
+# Event quantities that add up when several rows share a timestamp (two doses entered at
+# the same minute are two doses). Everything else keeps its first value.
+SUMMED_EVENT_FIELDS: frozenset[str] = frozenset({"fast_acting_insulin_u", "long_acting_insulin_u", "carb_grams"})
+
+
+def merge_same_timestamp_rows(df: pl.DataFrame) -> pl.DataFrame:
+    """
+    Collapse rows sharing (timestamp, user_id) into one, sorted by (timestamp, user_id).
+
+    - Exact duplicate rows are dropped first: consecutive exports overlap in time, so the
+      same record can arrive twice.
+    - ``SUMMED_EVENT_FIELDS`` are summed over the remaining rows (null if none has a value).
+    - Every other column takes its first value in the frame's current order.
+
+    Row converters write "" for fields a row does not carry (an EGV row's insulin), so in
+    string columns "" is treated as missing; otherwise it would win over a real value.
+    """
+    group_cols = ['timestamp', 'user_id']
+    df = df.with_columns(
+        [pl.col(c).cast(pl.Float64, strict=False) for c in df.columns if c in SUMMED_EVENT_FIELDS]
+    ).with_columns(
+        [pl.col(c).replace("", None) for c, dtype in df.schema.items() if dtype == pl.String and c not in SUMMED_EVENT_FIELDS]
+    ).unique(maintain_order=True)
+
+    def present(col: str) -> pl.Expr:
+        return pl.col(col).filter(pl.col(col).is_not_null())
+
+    agg_exprs = [
+        pl.when(pl.col(col).is_not_null().any()).then(pl.col(col).sum()).alias(col)
+        if col in SUMMED_EVENT_FIELDS
+        else present(col).first().alias(col)
+        for col in df.columns
+        if col not in group_cols
+    ]
+    return df.group_by(group_cols).agg(agg_exprs).sort(group_cols)
 
 
 class DatabaseConverter(ABC):
@@ -32,6 +81,111 @@ class DatabaseConverter(ABC):
         self.output_fields = output_fields
         self.database_type = database_type
         self.format_detector = CSVFormatDetector(output_fields)
+        # How each examined data file fared, keyed by one of the FILE_* reasons.
+        self.file_report: Counter[str] = Counter()
+        # Subjects whose rows were all removed by database-specific filtering.
+        self.subjects_without_trace_rows: int = 0
+
+    def describe_file_report(self) -> str:
+        """Summarise how many examined files matched a converter, grouped by reason."""
+        total = sum(self.file_report.values())
+        matched = self.file_report.get(FILE_MATCHED, 0)
+        others = ", ".join(
+            f"{reason}: {count}" for reason, count in sorted(self.file_report.items()) if reason != FILE_MATCHED
+        )
+        report = f"{matched} of {total} data files matched a converter" + (f" ({others})" if others else "")
+        if self.subjects_without_trace_rows:
+            report += (
+                f"; {self.subjects_without_trace_rows} subject folder(s) had no rows left after "
+                f"{self.database_type}-specific filtering"
+            )
+        return report
+
+    def _read_converted_rows(self, file_path: Path) -> List[Dict[str, Any]]:
+        """
+        Detect the format of one CSV/TXT file and convert its rows.
+
+        Files that no converter recognises are skipped and counted in ``file_report``;
+        the caller decides whether an empty result is fatal.
+        """
+        data: List[Dict[str, Any]] = []
+        try:
+            converter = self.format_detector.detect_format(file_path)
+            if converter is None:
+                logger.debug(f"No converter recognised {file_path}, skipping file")
+                self.file_report[FILE_NO_CONVERTER] += 1
+                return data
+
+            with open(file_path, 'r', encoding='utf-8-sig') as file:  # utf-8-sig handles BOM
+                lines = file.readlines()
+
+            # Find the line with headers
+            header_line_num = None
+            delimiter = converter.get_csv_delimiter()
+            for line_num in range(min(15, len(lines))):
+                line = lines[line_num].strip()
+                if not line:
+                    continue
+                headers = next(csv.reader(StringIO(line), delimiter=delimiter))
+                # Clean headers: remove quotes and strip whitespace
+                headers = [col.strip().strip('"') for col in headers]
+                if converter.can_handle(headers):
+                    header_line_num = line_num
+                    break
+
+            if header_line_num is None:
+                logger.info(f"Could not find headers for {file_path}")
+                self.file_report[FILE_NO_HEADER] += 1
+                return data
+
+            header_line = lines[header_line_num].strip()
+            # Fallback heuristic if converter didn't specify
+            if delimiter == "," and header_line.count(";") > header_line.count(","):
+                delimiter = ";"
+            reader = csv.DictReader(StringIO(''.join(lines[header_line_num:])), delimiter=delimiter)
+
+            for row in reader:
+                converted_record = converter.convert_row(row)
+                if converted_record is not None:
+                    data.append(converted_record)
+            self.file_report[FILE_MATCHED] += 1
+        except Exception as e:
+            logger.info(f"Error processing {file_path}: {e}")
+            self.file_report[FILE_READ_ERROR] += 1
+
+        return data
+
+    @staticmethod
+    def _records_to_frame(records: List[Dict[str, Any]]) -> pl.DataFrame:
+        """Build an all-string DataFrame from converted records, filling missing output fields."""
+        output_fields = CSVFormatConverter.get_output_fields()
+        for record in records:
+            for field in output_fields:
+                if field not in record:
+                    record[field] = None
+            # Coerce any non-string values to strings to avoid Polars schema inference conflicts
+            for k, v in list(record.items()):
+                if v is None or isinstance(v, str):
+                    continue
+                record[k] = str(v)
+        all_columns: set[str] = set()
+        for record in records:
+            all_columns.update(record.keys())
+        schema_overrides = {col: pl.Utf8 for col in sorted(all_columns)}
+        return pl.DataFrame(records, schema_overrides=schema_overrides)
+
+    @staticmethod
+    def _parse_timestamps(df: pl.DataFrame) -> pl.DataFrame:
+        """Parse string timestamps in the supported layouts and drop rows that fail to parse."""
+        if df['timestamp'].dtype in [pl.Utf8, pl.String]:
+            df = df.with_columns(
+                pl.coalesce(
+                    pl.col('timestamp').str.to_datetime("%Y-%m-%dT%H:%M:%S", strict=False),
+                    pl.col('timestamp').str.to_datetime("%Y-%m-%d %H:%M:%S", strict=False),
+                    pl.col('timestamp').str.to_datetime("%Y-%m-%d %H:%M:%S%.f", strict=False),
+                ).alias('timestamp')
+            )
+        return df.filter(pl.col('timestamp').is_not_null())
 
     def _get_start_with_user_id(self) -> Optional[str]:
         """Get the start_with_user_id parameter for this database from config."""
@@ -141,13 +295,11 @@ class MonoUserDatabaseConverter(DatabaseConverter):
         Returns:
             Consolidated DataFrame with processed data
         """
-        # For backward compatibility and simple cases, we just use the first user
-        # (which is the only user in MonoUser)
         all_dfs = list(self.iter_user_event_frames(data_folder, interval_minutes=5))
         if not all_dfs:
-            raise ValueError("No valid data found in CSV files!")
-        
-        df = all_dfs[0]
+            raise ValueError(f"No valid data found in {data_folder}: {self.describe_file_report()}")
+
+        df = pl.concat(all_dfs, how="diagonal_relaxed")
         
         # Write to output file
         if output_file:
@@ -168,167 +320,80 @@ class MonoUserDatabaseConverter(DatabaseConverter):
 
     def iter_user_event_frames(self, data_folder: Union[str, Path], *, interval_minutes: int) -> Iterable[pl.DataFrame]:
         """
-        Iterate over users and return a DataFrame for each user.
-        For MonoUserDatabaseConverter, this yields a single DataFrame for the entire folder.
+        Iterate over users and yield one DataFrame per user.
+
+        Users are identified in this order:
+        - a ``user_id`` the row converter set (e.g. ``PtID`` in shared clinical-trial files);
+        - otherwise the first-level subfolder the file sits in, so a root holding one folder
+          per subject (BIG IDEAs, D1NAMO) yields one user per folder;
+        - otherwise, for files directly in ``data_folder``, the folder's own name.
         """
         csv_path = Path(data_folder)
-        
+
         if not csv_path.exists():
             raise FileNotFoundError(f"Data folder not found: {data_folder}")
-        
+
         if not csv_path.is_dir():
             raise ValueError(f"Input must be a directory containing CSV files, got: {data_folder}")
-        
-        # Use folder name as user_id for mono-user databases
-        user_id = "Subject 000" # csv_path.name
-        
-        all_data = []
-        
-        # Get all CSV and TXT files (including in subdirectories, sorted for deterministic processing order)
-        csv_files = list(csv_path.glob("**/*.csv"))
-        txt_files = list(csv_path.glob("**/*.txt"))
-        all_files = sorted(csv_files + txt_files)
-        
-        if not all_files:
+
+        subject_groups = self._group_files_by_subject(csv_path)
+        if not subject_groups:
             logger.warning(f"No CSV or TXT files found in directory: {data_folder}")
             return
-        
-        logger.info(f"Found {len(all_files)} files to consolidate for user {user_id}")
-        
-        for data_file in all_files:
-            file_data = self._process_csv_file(data_file)
-            # Add user_id to each record
-            for record in file_data:
-                record['user_id'] = user_id
-            all_data.extend(file_data)
-        
-        if not all_data:
-            return
-            
-        # Ensure all records have all required fields before DataFrame creation.
-        output_fields = CSVFormatConverter.get_output_fields()
-        for record in all_data:
-            for field in output_fields:
-                if field not in record:
-                    record[field] = None
-            # Coerce any non-string values to strings to avoid Polars schema inference conflicts
-            for k, v in list(record.items()):
-                if v is None or isinstance(v, str):
-                    continue
-                record[k] = str(v)
-        
-        # Convert to DataFrame with an explicit string schema
-        all_columns: set[str] = set()
-        for record in all_data:
-            all_columns.update(record.keys())
-        schema_overrides = {col: pl.Utf8 for col in all_columns}
-        df = pl.DataFrame(all_data, schema_overrides=schema_overrides)
-        
-        # Enforce output schema
-        df = self._enforce_output_schema(df)
-        
-        # Parse timestamps and sort
-        logger.info(f"Parsing timestamps and sorting for user {user_id}...")
-        timestamp_col_type = df['timestamp'].dtype
-        if timestamp_col_type in [pl.Utf8, pl.String]:
-            df = df.with_columns(
-                pl.coalesce(
-                    pl.col('timestamp').str.to_datetime("%Y-%m-%dT%H:%M:%S", strict=False),
-                    pl.col('timestamp').str.to_datetime("%Y-%m-%d %H:%M:%S", strict=False),
-                    pl.col('timestamp').str.to_datetime("%Y-%m-%d %H:%M:%S%.f", strict=False),
-                ).alias('timestamp')
-            )
-        
-        # Remove rows where timestamp parsing failed
-        df = df.filter(pl.col('timestamp').is_not_null())
-        
-        # Sort by timestamp (oldest first)
-        df = df.sort('timestamp')
-        
-        # De-duplicate records with identical timestamps
-        logger.info(f"De-duplicating records for user {user_id}...")
-        group_cols = ['timestamp', 'user_id']
-            
-        agg_exprs = []
-        for col in df.columns:
-            if col in group_cols:
+
+        n_files = sum(len(files) for _, files in subject_groups)
+        logger.info(f"Found {n_files} files in {len(subject_groups)} subject folder(s) to consolidate")
+
+        for folder_user_id, files in subject_groups:
+            records: List[Dict[str, Any]] = []
+            for data_file in files:
+                for record in self._read_converted_rows(data_file):
+                    if not record.get('user_id'):
+                        record['user_id'] = folder_user_id
+                    records.append(record)
+
+            if not records:
                 continue
-            agg_exprs.append(
-                pl.col(col).filter(pl.col(col).is_not_null()).first().alias(col)
-            )
-        
-        df = df.group_by(group_cols).agg(agg_exprs).sort(group_cols)
-        
-        # Apply database-specific processing
-        df = self._apply_database_specific_processing(df)
-        
-        yield df
-    
-    def _process_csv_file(self, file_path: Path) -> List[Dict[str, Any]]:
-        """Process a single CSV file and extract required fields using format detection."""
-        data = []
-        
-        try:
-            # Detect the format of the CSV file
-            converter = self.format_detector.detect_format(file_path)
-            
-            if converter is None:
-                logger.info(f"Warning: Could not detect format for {file_path}, skipping file")
-                return data
-            
-            with open(file_path, 'r', encoding='utf-8-sig') as file:  # utf-8-sig handles BOM
-                lines = file.readlines()
-                
-                # Find the line with headers
-                header_line_num = None
-                delimiter = converter.get_csv_delimiter()
-                
-                for line_num in range(min(15, len(lines))):
-                    line = lines[line_num].strip()
-                    if not line:
-                        continue
-                    
-                    # Parse CSV line properly using the converter's delimiter
-                    import csv
-                    from io import StringIO
-                    csv_reader = csv.reader(StringIO(line), delimiter=delimiter)
-                    headers = next(csv_reader)
-                    
-                    # Clean headers: remove quotes and strip whitespace
-                    headers = [col.strip().strip('"') for col in headers]
-                    
-                    if converter.can_handle(headers):
-                        header_line_num = line_num
-                        break
-                
-                if header_line_num is None:
-                    logger.info(f"Could not find headers for {file_path}")
-                    return data
-                
-                # Create a new file-like object starting from the header line
-                from io import StringIO
-                csv_content = ''.join(lines[header_line_num:])
-                csv_file = StringIO(csv_content)
-                
-                import csv
-                header_line = lines[header_line_num].strip()
-                delimiter = converter.get_csv_delimiter()
-                # Fallback heuristic if converter didn't specify
-                if delimiter == "," and header_line.count(";") > header_line.count(","):
-                    delimiter = ";"
-                reader = csv.DictReader(csv_file, delimiter=delimiter)
-                
-                for row in reader:
-                    # Use the appropriate converter to process the row
-                    converted_record = converter.convert_row(row)
-                    if converted_record is not None:
-                        data.append(converted_record)
-                    
-        except Exception as e:
-            logger.info(f"Error processing {file_path}: {e}")
-        
-        return data
-    
+
+            df = self._enforce_output_schema(self._records_to_frame(records))
+            df = self._parse_timestamps(df)
+            # Before de-duplication, so a dropped row cannot lend its event_type to a kept
+            # row that shares its timestamp.
+            df = self._drop_non_trace_rows(df)
+            if df.height == 0:
+                self.subjects_without_trace_rows += 1
+                continue
+
+            df = merge_same_timestamp_rows(df)
+
+            user_frames = df.partition_by('user_id', as_dict=True, maintain_order=True)
+            for (user_id,), user_df in sorted(user_frames.items(), key=lambda item: item[0]):
+                logger.info(f"Consolidated {len(user_df):,} records for user {user_id}")
+                yield self._apply_database_specific_processing(user_df)
+
+    def _drop_non_trace_rows(self, df: pl.DataFrame) -> pl.DataFrame:
+        """
+        Remove converted rows that must not reach the glucose trace (overridden by
+        subclasses). Runs on string columns, before per-timestamp de-duplication.
+        """
+        return df
+
+    @staticmethod
+    def _group_files_by_subject(root: Path) -> List[Tuple[str, List[Path]]]:
+        """
+        Group data files by subject: files directly under ``root`` belong to ``root.name``,
+        files anywhere below a first-level subfolder belong to that subfolder's name.
+        Groups and files are sorted for a deterministic processing order.
+        """
+        groups: Dict[str, List[Path]] = {}
+        for data_file in sorted(root.glob("**/*")):
+            if not data_file.is_file() or data_file.suffix.lower() not in DATA_FILE_SUFFIXES:
+                continue
+            relative = data_file.relative_to(root)
+            subject = root.name if len(relative.parts) == 1 else relative.parts[0]
+            groups.setdefault(subject, []).append(data_file)
+        return sorted(groups.items(), key=lambda item: item[0])
+
     def _apply_database_specific_processing(self, df: pl.DataFrame) -> pl.DataFrame:
         """
         Apply database-specific processing (to be overridden by subclasses).
@@ -430,42 +495,9 @@ class MultiUserDatabaseConverter(DatabaseConverter):
             if not user_data:
                 continue
                 
-            # Ensure all records have all required fields
-            output_fields = CSVFormatConverter.get_output_fields()
-            for record in user_data:
-                for field in output_fields:
-                    if field not in record:
-                        record[field] = None
-                # Coerce any non-string values to strings to avoid Polars schema inference conflicts
-                for k, v in list(record.items()):
-                    if v is None or isinstance(v, str):
-                        continue
-                    record[k] = str(v)
-            
-            # Convert to DataFrame with an explicit string schema
-            all_columns: set[str] = set()
-            for record in user_data:
-                all_columns.update(record.keys())
-            schema_overrides = {col: pl.Utf8 for col in all_columns}
-            df = pl.DataFrame(user_data, schema_overrides=schema_overrides)
-            
-            # Enforce output schema
-            df = self._enforce_output_schema(df)
-            
-            # Parse timestamps and sort
-            timestamp_col_type = df['timestamp'].dtype
-            if timestamp_col_type in [pl.Utf8, pl.String]:
-                df = df.with_columns(
-                    pl.coalesce(
-                        pl.col('timestamp').str.to_datetime("%Y-%m-%dT%H:%M:%S", strict=False),
-                        pl.col('timestamp').str.to_datetime("%Y-%m-%d %H:%M:%S", strict=False),
-                        pl.col('timestamp').str.to_datetime("%Y-%m-%d %H:%M:%S%.f", strict=False),
-                    ).alias('timestamp')
-                )
-            
-            # Remove rows where timestamp parsing failed
-            df = df.filter(pl.col('timestamp').is_not_null())
-            
+            df = self._enforce_output_schema(self._records_to_frame(user_data))
+            df = self._parse_timestamps(df)
+
             # Sort by user_id and timestamp
             df = df.sort(['user_id', 'timestamp'])
             
@@ -543,70 +575,10 @@ class MultiUserDatabaseConverter(DatabaseConverter):
         return user_data
     
     def _process_csv_file(self, file_path: Path, user_id: str) -> List[Dict[str, Any]]:
-        """Process a single CSV file and extract required fields using format detection."""
-        data = []
-        
-        try:
-            # Detect the format of the CSV file
-            converter = self.format_detector.detect_format(file_path)
-            
-            if converter is None:
-                logger.info(f"Warning: Could not detect format for {file_path}, skipping file")
-                return data
-            
-            with open(file_path, 'r', encoding='utf-8-sig') as file:  # utf-8-sig handles BOM
-                lines = file.readlines()
-                
-                # Find the line with headers
-                header_line_num = None
-                delimiter = converter.get_csv_delimiter()
-                
-                for line_num in range(min(15, len(lines))):
-                    line = lines[line_num].strip()
-                    if not line:
-                        continue
-                    
-                    # Parse CSV line properly using the converter's delimiter
-                    import csv
-                    from io import StringIO
-                    csv_reader = csv.reader(StringIO(line), delimiter=delimiter)
-                    headers = next(csv_reader)
-                    
-                    # Clean headers: remove quotes and strip whitespace
-                    headers = [col.strip().strip('"') for col in headers]
-                    
-                    if converter.can_handle(headers):
-                        header_line_num = line_num
-                        break
-                
-                if header_line_num is None:
-                    logger.info(f"Could not find headers for {file_path}")
-                    return data
-                
-                # Create a new file-like object starting from the header line
-                from io import StringIO
-                csv_content = ''.join(lines[header_line_num:])
-                csv_file = StringIO(csv_content)
-                
-                import csv
-                header_line = lines[header_line_num].strip()
-                delimiter = converter.get_csv_delimiter()
-                # Fallback heuristic if converter didn't specify
-                if delimiter == "," and header_line.count(";") > header_line.count(","):
-                    delimiter = ";"
-                reader = csv.DictReader(csv_file, delimiter=delimiter)
-                
-                for row in reader:
-                    # Use the appropriate converter to process the row
-                    converted_record = converter.convert_row(row)
-                    if converted_record is not None:
-                        # Add user_id to the record
-                        converted_record['user_id'] = user_id
-                        data.append(converted_record)
-                    
-        except Exception as e:
-            logger.info(f"Error processing {file_path}: {e}")
-        
+        """Process a single CSV file for one user and tag every record with that user_id."""
+        data = self._read_converted_rows(file_path)
+        for record in data:
+            record['user_id'] = user_id
         return data
 
     def _apply_database_specific_processing(self, df: pl.DataFrame) -> pl.DataFrame:

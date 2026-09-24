@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 from formats.base_converter import CSVFormatConverter
+from formats.glucose_bounds import MGDL_PER_MMOL
 
 
 class UoMGlucoseConverter(CSVFormatConverter):
@@ -92,7 +93,7 @@ class UoMGlucoseConverter(CSVFormatConverter):
         try:
             value_mmol = float(value_str.strip())
             # Business logic: convert mmol/L to mg/dL (factor = 18.0)
-            value_mgdl = value_mmol * 18.0
+            value_mgdl = value_mmol * MGDL_PER_MMOL
             return str(round(value_mgdl, 1))
         except (ValueError, TypeError):
             return None

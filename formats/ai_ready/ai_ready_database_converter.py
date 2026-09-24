@@ -20,6 +20,7 @@ import polars as pl
 from loguru import logger
 
 from formats.database_converters import DatabaseConverter
+from formats.glucose_bounds import dexcom_style_bounds
 
 
 @dataclass(frozen=True)
@@ -212,29 +213,6 @@ class AIReadyDatabaseConverter(DatabaseConverter):
             pid = str(row["person_id"])
             out[pid] = row
         return out
-
-    def _extract_user_rows(
-        self,
-        zip_ref: zipfile.ZipFile,
-        layout: _AIReadyZipLayout,
-        user_id: str,
-        meta: dict[str, Any],
-    ) -> list[dict[str, Any]]:
-        rows: list[dict[str, Any]] = []
-
-        # Dexcom CGM
-        rows.extend(self._extract_cgm(zip_ref, layout, user_id, meta))
-
-        # Garmin modalities
-        rows.extend(self._extract_garmin_heart_rate(zip_ref, layout, user_id, meta))
-        rows.extend(self._extract_garmin_stress(zip_ref, layout, user_id, meta))
-        rows.extend(self._extract_garmin_calories(zip_ref, layout, user_id, meta))
-        rows.extend(self._extract_garmin_steps(zip_ref, layout, user_id, meta))
-        rows.extend(self._extract_garmin_sleep(zip_ref, layout, user_id, meta))
-        rows.extend(self._extract_garmin_respiratory_rate(zip_ref, layout, user_id, meta))
-        rows.extend(self._extract_garmin_oxygen_saturation(zip_ref, layout, user_id, meta))
-
-        return rows
 
     def _extract_user_frame(
         self,
@@ -442,6 +420,13 @@ class AIReadyDatabaseConverter(DatabaseConverter):
         if not isinstance(records, list):
             return None
 
+        # Dexcom reports readings beyond the sensor range as the strings "High"/"Low";
+        # map them to the same bounds the Dexcom CSV converter uses instead of dropping them.
+        low_value, high_value = dexcom_style_bounds(self.config)
+        out_of_range = {"High": high_value, "Low": low_value}
+        out_of_range_counts = {"High": 0, "Low": 0}
+        unparseable = 0
+
         ts_list: list[datetime] = []
         val_list: list[float] = []
         for rec in records:
@@ -454,12 +439,26 @@ class AIReadyDatabaseConverter(DatabaseConverter):
             dt = _parse_timestamp_to_naive_utc(ts)
             if dt is None:
                 continue
-            try:
-                val = float(bg)
-            except Exception:
-                continue
+            if isinstance(bg, str) and bg.strip() in out_of_range:
+                label = bg.strip()
+                out_of_range_counts[label] += 1
+                val = out_of_range[label]
+            else:
+                try:
+                    val = float(bg)
+                except (TypeError, ValueError):
+                    unparseable += 1
+                    continue
             ts_list.append(dt)
             val_list.append(val)
+
+        if out_of_range_counts["High"] or out_of_range_counts["Low"]:
+            logger.info(
+                f"  User {user_id}: replaced {out_of_range_counts['High']} 'High' with {high_value} "
+                f"and {out_of_range_counts['Low']} 'Low' with {low_value}"
+            )
+        if unparseable:
+            logger.warning(f"  User {user_id}: skipped {unparseable} CGM records with a non-numeric glucose value")
 
         if not ts_list:
             return None
@@ -668,212 +667,3 @@ class AIReadyDatabaseConverter(DatabaseConverter):
         for df in frames[1:]:
             out = out.join(df, on="timestamp", how="outer_coalesce")
         return out
-
-    def _base_row(self, user_id: str, meta: dict[str, Any], *, event_type: str, timestamp: str) -> dict[str, Any]:
-        return {
-            "user_id": user_id,
-            "timestamp": timestamp,
-            "event_type": event_type,
-            "clinical_site": meta.get("clinical_site", ""),
-            "study_group": meta.get("study_group", ""),
-            "recommended_split": meta.get("recommended_split", ""),
-            "age": meta.get("age", ""),
-            "study_visit_date": meta.get("study_visit_date", ""),
-        }
-
-    def _extract_cgm(
-        self, zip_ref: zipfile.ZipFile, layout: _AIReadyZipLayout, user_id: str, meta: dict[str, Any]
-    ) -> list[dict[str, Any]]:
-        member = layout.dexcom_cgm_json(user_id)
-        try:
-            obj = _json_load_from_zip(zip_ref, member)
-        except KeyError:
-            return []
-
-        records = _dig(obj, "body.cgm")
-        if not isinstance(records, list):
-            return []
-
-        out: list[dict[str, Any]] = []
-        for rec in records:
-            if not isinstance(rec, dict):
-                continue
-            ts = _dig(rec, "effective_time_frame.time_interval.start_date_time")
-            if not isinstance(ts, str) or not ts:
-                continue
-            bg = _dig(rec, "blood_glucose.value")
-            row = self._base_row(user_id, meta, event_type=str(rec.get("event_type", "EGV")), timestamp=ts)
-            if bg is not None:
-                row["glucose_value_mgdl"] = bg
-            out.append(row)
-        return out
-
-    def _extract_garmin_heart_rate(
-        self, zip_ref: zipfile.ZipFile, layout: _AIReadyZipLayout, user_id: str, meta: dict[str, Any]
-    ) -> list[dict[str, Any]]:
-        member = layout.garmin_file("heart_rate", user_id, "heartrate")
-        return self._extract_simple_value_series(
-            zip_ref,
-            member,
-            user_id,
-            meta,
-            event_type="HeartRate",
-            records_path="body.heart_rate",
-            timestamp_path="effective_time_frame.date_time",
-            value_path="heart_rate.value",
-            output_field="heart_rate",
-        )
-
-    def _extract_garmin_stress(
-        self, zip_ref: zipfile.ZipFile, layout: _AIReadyZipLayout, user_id: str, meta: dict[str, Any]
-    ) -> list[dict[str, Any]]:
-        member = layout.garmin_file("stress", user_id, "stress")
-        return self._extract_simple_value_series(
-            zip_ref,
-            member,
-            user_id,
-            meta,
-            event_type="Stress",
-            records_path="body.stress",
-            timestamp_path="effective_time_frame.date_time",
-            value_path="stress.value",
-            output_field="stress_level",
-        )
-
-    def _extract_garmin_calories(
-        self, zip_ref: zipfile.ZipFile, layout: _AIReadyZipLayout, user_id: str, meta: dict[str, Any]
-    ) -> list[dict[str, Any]]:
-        member = layout.garmin_file("physical_activity_calorie", user_id, "calorie")
-        return self._extract_simple_value_series(
-            zip_ref,
-            member,
-            user_id,
-            meta,
-            event_type="Calories",
-            records_path="body.activity",
-            timestamp_path="effective_time_frame.date_time",
-            value_path="calories_value.value",
-            output_field="active_kcal",
-            extra_fields={"activity_name": "activity_name"},
-        )
-
-    def _extract_garmin_steps(
-        self, zip_ref: zipfile.ZipFile, layout: _AIReadyZipLayout, user_id: str, meta: dict[str, Any]
-    ) -> list[dict[str, Any]]:
-        member = layout.garmin_file("physical_activity", user_id, "activity")
-        # activity uses time_interval.start_date_time
-        return self._extract_simple_value_series(
-            zip_ref,
-            member,
-            user_id,
-            meta,
-            event_type="Activity",
-            records_path="body.activity",
-            timestamp_path="effective_time_frame.time_interval.start_date_time",
-            value_path="base_movement_quantity.value",
-            output_field="step_count",
-            extra_fields={"activity_name": "activity_name"},
-        )
-
-    def _extract_garmin_sleep(
-        self, zip_ref: zipfile.ZipFile, layout: _AIReadyZipLayout, user_id: str, meta: dict[str, Any]
-    ) -> list[dict[str, Any]]:
-        member = layout.garmin_file("sleep", user_id, "sleep")
-        try:
-            obj = _json_load_from_zip(zip_ref, member)
-        except KeyError:
-            return []
-
-        records = _dig(obj, "body.sleep")
-        if not isinstance(records, list):
-            return []
-
-        out: list[dict[str, Any]] = []
-        for rec in records:
-            if not isinstance(rec, dict):
-                continue
-            ts = _dig(rec, "effective_time_frame.time_interval.start_date_time")
-            if not isinstance(ts, str) or not ts:
-                continue
-            sleep_stage = rec.get("sleep_stage_state")
-            row = self._base_row(user_id, meta, event_type="Sleep", timestamp=ts)
-            if sleep_stage is not None:
-                row["sleep_level"] = sleep_stage
-            out.append(row)
-        return out
-
-    def _extract_garmin_respiratory_rate(
-        self, zip_ref: zipfile.ZipFile, layout: _AIReadyZipLayout, user_id: str, meta: dict[str, Any]
-    ) -> list[dict[str, Any]]:
-        member = layout.garmin_file("respiratory_rate", user_id, "respiratoryrate")
-        return self._extract_simple_value_series(
-            zip_ref,
-            member,
-            user_id,
-            meta,
-            event_type="RespiratoryRate",
-            records_path="body.breathing",
-            timestamp_path="effective_time_frame.date_time",
-            value_path="respiratory_rate.value",
-            output_field="respiratory_rate",
-        )
-
-    def _extract_garmin_oxygen_saturation(
-        self, zip_ref: zipfile.ZipFile, layout: _AIReadyZipLayout, user_id: str, meta: dict[str, Any]
-    ) -> list[dict[str, Any]]:
-        member = layout.garmin_file("oxygen_saturation", user_id, "oxygensaturation")
-        return self._extract_simple_value_series(
-            zip_ref,
-            member,
-            user_id,
-            meta,
-            event_type="OxygenSaturation",
-            records_path="body.breathing",
-            timestamp_path="effective_time_frame.date_time",
-            value_path="oxygen_saturation.value",
-            output_field="oxygen_saturation_percent",
-        )
-
-    def _extract_simple_value_series(
-        self,
-        zip_ref: zipfile.ZipFile,
-        member: str,
-        user_id: str,
-        meta: dict[str, Any],
-        *,
-        event_type: str,
-        records_path: str,
-        timestamp_path: str,
-        value_path: str,
-        output_field: str,
-        extra_fields: Optional[dict[str, str]] = None,
-    ) -> list[dict[str, Any]]:
-        try:
-            obj = _json_load_from_zip(zip_ref, member)
-        except KeyError:
-            return []
-
-        records = _dig(obj, records_path)
-        if not isinstance(records, list):
-            return []
-
-        out: list[dict[str, Any]] = []
-        for rec in records:
-            if not isinstance(rec, dict):
-                continue
-            ts = _dig(rec, timestamp_path)
-            if not isinstance(ts, str) or not ts:
-                continue
-            val = _dig(rec, value_path)
-            row = self._base_row(user_id, meta, event_type=event_type, timestamp=ts)
-            if val is not None:
-                row[output_field] = val
-            if extra_fields:
-                for source_key, out_key in extra_fields.items():
-                    v = rec.get(source_key)
-                    if v is not None:
-                        row[out_key] = v
-            out.append(row)
-        return out
-
-

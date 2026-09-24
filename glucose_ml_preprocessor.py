@@ -308,7 +308,8 @@ class GlucoseMLPreprocessor:
             round_precision=cli_overrides.get('round_precision', config.get('round_precision', 3)),
             first_n_users=cli_overrides.get('first_n_users', config.get('first_n_users', None)),
             output_file=cli_overrides.get('output_file', config.get('output_file', None)),
-            print_statistics=cli_overrides.get('print_statistics', config.get('print_statistics', True))
+            print_statistics=cli_overrides.get('print_statistics', config.get('print_statistics', True)),
+            max_workers=cli_overrides.get('max_workers', config.get('max_workers', None)),
         )
     
     @staticmethod
@@ -344,6 +345,7 @@ class GlucoseMLPreprocessor:
         first_n_users: Optional[int] = None,
         output_file: Optional[str] = None,
         print_statistics: bool = True,
+        max_workers: Optional[int] = None,
     ) -> None:
         self.expected_interval_minutes = expected_interval_minutes
         self.small_gap_max_minutes = small_gap_max_minutes
@@ -362,9 +364,21 @@ class GlucoseMLPreprocessor:
         self.round_precision = round_precision
         self.output_file = Path(output_file) if output_file else None
         self.print_statistics = print_statistics
+        if max_workers is not None and max_workers < 1:
+            raise ValueError(f"max_workers must be >= 1, got {max_workers}")
+        # Concurrent per-user workers; None means one per CPU core.
+        self.max_workers: int = max_workers if max_workers is not None else (os.cpu_count() or 1)
         if first_n_users is not None:
             self.config['first_n_users'] = first_n_users
-        
+        # Database converters read these from config['dexcom'] (dexcom_style_bounds,
+        # DexcomDatabaseConverter), so the resolved CLI/constructor values must land there.
+        self.config['dexcom'] = {
+            **(self.config.get('dexcom') or {}),
+            'remove_calibration': remove_calibration,
+            'high_glucose_value': high_glucose_value,
+            'low_glucose_value': low_glucose_value,
+        }
+
         # Ensure round_precision is in config for sub-components
         if 'round_precision' not in self.config:
             self.config['round_precision'] = self.round_precision
@@ -582,6 +596,10 @@ class GlucoseMLPreprocessor:
             buffered_bytes = 0
             buffered_users = 0
             for frame in frames:
+                if len(frame) == 0:
+                    # A user whose sequences were all filtered out; writing nothing must not
+                    # consume the header, or the file starts with a data row.
+                    continue
                 total_records += len(frame)
                 self._write_csv_append(frame, output_file=output_file, include_header=not wrote_header)
                 wrote_header = True
@@ -648,7 +666,8 @@ class GlucoseMLPreprocessor:
         # Use ThreadPoolExecutor: threads share memory — no IPC pipes, no pickling,
         # no Windows non-paged pool exhaustion. Polars releases the GIL so threads
         # run in parallel for Polars-heavy steps.
-        max_workers = os.cpu_count() or 1
+        max_workers = self.max_workers
+        users_emptied_by_filtering = 0
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             max_active_tasks = max_workers
             futures = []
@@ -656,6 +675,7 @@ class GlucoseMLPreprocessor:
             typed_iter_fn = cast(Iterable[pl.DataFrame], iter_fn(data_folder, interval_minutes=self.expected_interval_minutes))
             for user_df in typed_iter_fn:
                 if len(user_df) == 0:
+                    users_emptied_by_filtering += 1
                     continue
                 
                 futures.append(executor.submit(
@@ -674,6 +694,20 @@ class GlucoseMLPreprocessor:
                 handle_result(futures.pop(0).result())
 
         flush()
+
+        if total_users_processed == 0:
+            raise ValueError(
+                f"No user data produced from {data_folder} as database type '{database_type}': "
+                f"{database_converter.describe_file_report()}"
+                + (
+                    # Frames emptied after yielding, e.g. by Dexcom calibration removal;
+                    # converter-side filtering is already in describe_file_report().
+                    f"; {users_emptied_by_filtering} user frame(s) were empty after conversion"
+                    if users_emptied_by_filtering
+                    else ""
+                )
+                + f". Check that the folder really holds {database_type} exports with usable glucose rows."
+            )
 
         # Use StatsManager to aggregate all collected user statistics
         if all_user_stats:

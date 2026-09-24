@@ -160,7 +160,13 @@ def main(
         None,
         "--round-precision",
         help="Number of digits after the decimal point to round numeric fields. Can be negative for rounding to the left of the decimal point (default: 3)."
-    )
+    ),
+    max_workers: Optional[int] = typer.Option(
+        None,
+        "--workers", "-w",
+        min=1,
+        help="Number of users processed concurrently (default: config 'max_workers', else one per CPU core). Polars threads are capped separately via POLARS_MAX_THREADS."
+    ),
 ) -> None:
     """
     Process glucose data from CSV folder(s) for machine learning.
@@ -230,6 +236,8 @@ def main(
             cli_overrides['first_n_users'] = first_n_users
         if round_precision is not None:
             cli_overrides['round_precision'] = round_precision
+        if max_workers is not None:
+            cli_overrides['max_workers'] = max_workers
 
         # Create preprocessor
         if resolved_config_file:

@@ -7,7 +7,7 @@
 
 ## Database Structure
 
-The MiniDose1 database is a **multi-user** T1D dataset. Data is stored in pipe-separated text files (`.txt`) within the `Data Tables` subdirectory.
+The MiniDose1 database is a **multi-user** T1D dataset: all participants share each table and are separated by `PtID`, which becomes `user_id` (before 2026-09-24 every participant was merged into one `Subject 000`). Data is stored in pipe-separated text files (`.txt`) within the `Data Tables` subdirectory.
 
 ### File Structure
 

@@ -10,7 +10,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 import zipfile
 
+import polars as pl
+
 from formats.database_converters import DatabaseConverter
+from formats.d1namo.d1namo_converter import D1NAMO_GLUCOSE_HEADERS, D1NAMO_INSULIN_HEADERS
+from formats.jaeb.jaeb_converter import JAEB_REQUIRED_HEADERS
+from formats.shanghai.shanghai_database_converter import find_shanghai_workbooks, shanghai_cgm_column
 
 
 class DatabaseDetector:
@@ -50,6 +55,15 @@ class DatabaseDetector:
         elif database_type == 'loop':
             from formats.loop.loop_database_converter import LoopDatabaseConverter
             return LoopDatabaseConverter
+        elif database_type == 'd1namo':
+            from formats.d1namo.d1namo_database_converter import D1namoDatabaseConverter
+            return D1namoDatabaseConverter
+        elif database_type == 'shanghai':
+            from formats.shanghai.shanghai_database_converter import ShanghaiDatabaseConverter
+            return ShanghaiDatabaseConverter
+        elif database_type == 'jaeb':
+            from formats.jaeb.jaeb_database_converter import JaebDatabaseConverter
+            return JaebDatabaseConverter
         return None
 
     def detect_database_type(self, data_folder: Union[str, Path]) -> str:
@@ -60,7 +74,7 @@ class DatabaseDetector:
             data_folder: Path to the data folder to analyze
             
         Returns:
-            Database type string ('dexcom', 'libre3', 'uom', 'uc_ht', 'medtronic', 'hupa', 'loop', 'minidose1', or 'unknown')
+            Database type string ('dexcom', 'libre3', 'uom', 'uc_ht', 'medtronic', 'hupa', 'loop', 'minidose1', 'jaeb', 'd1namo', 'shanghai', or 'unknown')
         """
         data_path = Path(data_folder)
         
@@ -86,6 +100,11 @@ class DatabaseDetector:
                 return "unknown"
             return "unknown"
         
+        # ShanghaiT1DM/T2DM: <patient>_<period>_<YYYYMMDD>.xls[x] workbooks with a CGM column
+        shanghai_workbooks = find_shanghai_workbooks(data_path)
+        if shanghai_workbooks and shanghai_cgm_column(pl.read_excel(shanghai_workbooks[0]).columns):
+            return 'shanghai'
+
         # UC_HT: folder-based with .xlsx files
         xlsx_files = list(data_path.glob("**/*.xlsx"))
         if xlsx_files:
@@ -114,14 +133,18 @@ class DatabaseDetector:
             'hupa': 0,
             'medtronic': 0,
             'minidose1': 0,
-            'loop': 0
+            'loop': 0,
+            'jaeb': 0,
+            'd1namo': 0,
         }
         
         for data_file in all_files:
             filename = data_file.stem.lower()
             
-            # Check for Dexcom patterns (standard format files)
-            if any(pattern in filename for pattern in ['dexcom', 'g6', 'cgm']):
+            # Only an explicit 'dexcom' in the name is a Dexcom hint. Generic 'cgm'/'g6' substrings
+            # also occur in CGMacros-0xx.csv, NonDiabDeviceCGM.csv, IDataCGM.txt and others, so
+            # those files fall through to header sniffing below.
+            if 'dexcom' in filename:
                 file_patterns['dexcom'] += 1
             elif any(pattern in filename for pattern in ['libre', 'freestyle']):
                 file_patterns['libre3'] += 1
@@ -177,6 +200,18 @@ class DatabaseDetector:
                                 file_patterns['minidose1'] += 1
                                 break
                                 
+                        # Check for JAEB comma-separated device tables (RecordType,Value layout)
+                        for line in first_lines:
+                            cells = {c.strip().strip('"') for c in line.split(',')}
+                            if JAEB_REQUIRED_HEADERS.issubset(cells):
+                                file_patterns['jaeb'] += 1
+                                break
+
+                        # Check for D1NAMO glucose/insulin tables (only the first line is a header)
+                        header_cells = {c.strip() for c in first_lines[0].split(',')} if first_lines else set()
+                        if D1NAMO_GLUCOSE_HEADERS.issubset(header_cells) or D1NAMO_INSULIN_HEADERS.issubset(header_cells):
+                            file_patterns['d1namo'] += 1
+
                         # Check for Loop format headers
                         for line in first_lines:
                             if 'PtID|' in line and 'UTCDtTm' in line and ('CGMVal' in line or 'Normal' in line or 'Rate' in line or 'CarbsNet' in line):
@@ -221,4 +256,4 @@ class DatabaseDetector:
         Returns:
             List of database type names supported by this detector
         """
-        return ['dexcom', 'libre3', 'uom', 'ai_ready', 'hupa', 'uc_ht', 'medtronic', 'minidose1', 'loop']
+        return ['dexcom', 'libre3', 'uom', 'ai_ready', 'hupa', 'uc_ht', 'medtronic', 'minidose1', 'loop', 'jaeb', 'd1namo', 'shanghai']

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from formats.base_converter import CSVFormatConverter
+from formats.glucose_bounds import MGDL_PER_MMOL
 
 
 class UoMConverter(CSVFormatConverter):
@@ -146,7 +147,7 @@ class UoMConverter(CSVFormatConverter):
 
         try:
             value_mmol = float(value_str.strip())
-            value_mgdl = value_mmol * 18  # Convert mmol/L to mg/dL
+            value_mgdl = value_mmol * MGDL_PER_MMOL
             return str(round(value_mgdl, 1))
         except (ValueError, TypeError):
             return None

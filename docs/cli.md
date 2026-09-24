@@ -31,6 +31,7 @@ glucose-process [INPUT_FOLDERS]... [OPTIONS]
 | `--fixed-frequency/--no-fixed-frequency` | | Enable or disable resampling to fixed time buckets (default: enabled). |
 | `--last-step` | | Last processing step to execute (1–7). Omit or use 0 for all steps. |
 | `--round-precision` | | Decimal digits for rounding numeric fields. Can be negative (default: 3). |
+| `--workers` | `-w` | Users processed concurrently (default: config `max_workers`, else CPU count). Polars threads are capped separately via `POLARS_MAX_THREADS`. |
 | `--verbose` | `-v` | Enable detailed logging. |
 | `--stats/--no-stats` | | Show or suppress the summary statistics printout (default: shown). |
 | `--save-intermediate` | `-s` | Export CSVs after each processing stage. |

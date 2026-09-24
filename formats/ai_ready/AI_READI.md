@@ -48,6 +48,7 @@ Each JSON file follows a structured format:
 Fields are extracted using path-based mappings defined in `ai_ready_schema.yaml`:
 
 - **CGM**: `body.cgm` → `blood_glucose.value` → `glucose_value_mgdl`
+  - Readings outside the sensor range arrive as the strings `"High"` / `"Low"`. They are replaced with `dexcom.high_glucose_value` / `dexcom.low_glucose_value` from the config (defaults 401 / 39), the same values the Dexcom CSV converter uses, and the per-user counts are logged.
 - **Heart Rate**: `body.heart_rate` → `heart_rate.value` → `heart_rate`
 - **Activity**: `body.activity` → `base_movement_quantity.value` → `step_count`
 - **Calories**: `body.activity` → `calories_value.value` → `active_kcal`
