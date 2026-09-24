@@ -322,8 +322,8 @@ class MonoUserDatabaseConverter(DatabaseConverter):
             ]
             df = df.group_by(group_cols).agg(agg_exprs).sort(group_cols)
 
-            for user_df in df.partition_by('user_id', maintain_order=True):
-                user_id = user_df['user_id'][0]
+            user_frames = df.partition_by('user_id', as_dict=True, maintain_order=True)
+            for (user_id,), user_df in sorted(user_frames.items(), key=lambda item: item[0]):
                 logger.info(f"Consolidated {len(user_df):,} records for user {user_id}")
                 yield self._apply_database_specific_processing(user_df)
 

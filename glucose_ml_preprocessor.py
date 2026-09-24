@@ -582,6 +582,10 @@ class GlucoseMLPreprocessor:
             buffered_bytes = 0
             buffered_users = 0
             for frame in frames:
+                if len(frame) == 0:
+                    # A user whose sequences were all filtered out; writing nothing must not
+                    # consume the header, or the file starts with a data row.
+                    continue
                 total_records += len(frame)
                 self._write_csv_append(frame, output_file=output_file, include_header=not wrote_header)
                 wrote_header = True

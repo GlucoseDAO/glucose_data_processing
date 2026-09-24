@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Union
 import zipfile
 
 from formats.database_converters import DatabaseConverter
+from formats.jaeb.jaeb_converter import JAEB_REQUIRED_HEADERS
 
 
 class DatabaseDetector:
@@ -50,6 +51,9 @@ class DatabaseDetector:
         elif database_type == 'loop':
             from formats.loop.loop_database_converter import LoopDatabaseConverter
             return LoopDatabaseConverter
+        elif database_type == 'jaeb':
+            from formats.jaeb.jaeb_database_converter import JaebDatabaseConverter
+            return JaebDatabaseConverter
         return None
 
     def detect_database_type(self, data_folder: Union[str, Path]) -> str:
@@ -60,7 +64,7 @@ class DatabaseDetector:
             data_folder: Path to the data folder to analyze
             
         Returns:
-            Database type string ('dexcom', 'libre3', 'uom', 'uc_ht', 'medtronic', 'hupa', 'loop', 'minidose1', or 'unknown')
+            Database type string ('dexcom', 'libre3', 'uom', 'uc_ht', 'medtronic', 'hupa', 'loop', 'minidose1', 'jaeb', or 'unknown')
         """
         data_path = Path(data_folder)
         
@@ -114,7 +118,8 @@ class DatabaseDetector:
             'hupa': 0,
             'medtronic': 0,
             'minidose1': 0,
-            'loop': 0
+            'loop': 0,
+            'jaeb': 0,
         }
         
         for data_file in all_files:
@@ -179,6 +184,13 @@ class DatabaseDetector:
                                 file_patterns['minidose1'] += 1
                                 break
                                 
+                        # Check for JAEB comma-separated device tables (RecordType,Value layout)
+                        for line in first_lines:
+                            cells = {c.strip().strip('"') for c in line.split(',')}
+                            if JAEB_REQUIRED_HEADERS.issubset(cells):
+                                file_patterns['jaeb'] += 1
+                                break
+
                         # Check for Loop format headers
                         for line in first_lines:
                             if 'PtID|' in line and 'UTCDtTm' in line and ('CGMVal' in line or 'Normal' in line or 'Rate' in line or 'CarbsNet' in line):
@@ -223,4 +235,4 @@ class DatabaseDetector:
         Returns:
             List of database type names supported by this detector
         """
-        return ['dexcom', 'libre3', 'uom', 'ai_ready', 'hupa', 'uc_ht', 'medtronic', 'minidose1', 'loop']
+        return ['dexcom', 'libre3', 'uom', 'ai_ready', 'hupa', 'uc_ht', 'medtronic', 'minidose1', 'loop', 'jaeb']
