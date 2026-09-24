@@ -10,9 +10,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 import zipfile
 
+import polars as pl
+
 from formats.database_converters import DatabaseConverter
 from formats.d1namo.d1namo_converter import D1NAMO_GLUCOSE_HEADERS, D1NAMO_INSULIN_HEADERS
 from formats.jaeb.jaeb_converter import JAEB_REQUIRED_HEADERS
+from formats.shanghai.shanghai_database_converter import find_shanghai_workbooks, shanghai_cgm_column
 
 
 class DatabaseDetector:
@@ -55,6 +58,9 @@ class DatabaseDetector:
         elif database_type == 'd1namo':
             from formats.d1namo.d1namo_database_converter import D1namoDatabaseConverter
             return D1namoDatabaseConverter
+        elif database_type == 'shanghai':
+            from formats.shanghai.shanghai_database_converter import ShanghaiDatabaseConverter
+            return ShanghaiDatabaseConverter
         elif database_type == 'jaeb':
             from formats.jaeb.jaeb_database_converter import JaebDatabaseConverter
             return JaebDatabaseConverter
@@ -68,7 +74,7 @@ class DatabaseDetector:
             data_folder: Path to the data folder to analyze
             
         Returns:
-            Database type string ('dexcom', 'libre3', 'uom', 'uc_ht', 'medtronic', 'hupa', 'loop', 'minidose1', 'jaeb', 'd1namo', or 'unknown')
+            Database type string ('dexcom', 'libre3', 'uom', 'uc_ht', 'medtronic', 'hupa', 'loop', 'minidose1', 'jaeb', 'd1namo', 'shanghai', or 'unknown')
         """
         data_path = Path(data_folder)
         
@@ -94,6 +100,11 @@ class DatabaseDetector:
                 return "unknown"
             return "unknown"
         
+        # ShanghaiT1DM/T2DM: <patient>_<period>_<YYYYMMDD>.xls[x] workbooks with a CGM column
+        shanghai_workbooks = find_shanghai_workbooks(data_path)
+        if shanghai_workbooks and shanghai_cgm_column(pl.read_excel(shanghai_workbooks[0]).columns):
+            return 'shanghai'
+
         # UC_HT: folder-based with .xlsx files
         xlsx_files = list(data_path.glob("**/*.xlsx"))
         if xlsx_files:
@@ -245,4 +256,4 @@ class DatabaseDetector:
         Returns:
             List of database type names supported by this detector
         """
-        return ['dexcom', 'libre3', 'uom', 'ai_ready', 'hupa', 'uc_ht', 'medtronic', 'minidose1', 'loop', 'jaeb', 'd1namo']
+        return ['dexcom', 'libre3', 'uom', 'ai_ready', 'hupa', 'uc_ht', 'medtronic', 'minidose1', 'loop', 'jaeb', 'd1namo', 'shanghai']

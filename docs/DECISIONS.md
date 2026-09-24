@@ -30,7 +30,7 @@ now becomes two users. Pass the subject folder itself in that case. Folder names
 ## D2 — CGM-only rows from JAEB and D1NAMO exports (2026-09-24)
 
 The pipeline treats every row with a glucose value as part of the CGM trace; it does not
-look at `event_type`. JAEB `Calibration`/`bgm` rows and D1NAMO `manual` fingersticks would
+look at `event_type`. JAEB `Calibration`/`bgm` rows, D1NAMO `manual` fingersticks and Shanghai `CBG` would
 therefore be resampled into the sensor trace. The converters emit CGM rows only and log
 how many rows of each other kind they skipped. Rejected: emitting them as `BGM` events,
 which is what MiniDose1 does, because nothing downstream separates them again.
