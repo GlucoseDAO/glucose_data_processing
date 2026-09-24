@@ -13,6 +13,7 @@ The `GlucoseMLPreprocessor` is governed by a YAML configuration file (typically 
 | `glucose_only` | bool | false | If true, drops all non-glucose fields and non-glucose records. |
 | `round_precision` | int | 3 | Number of digits after the decimal point to round numeric fields. Can be negative. |
 | `save_intermediate_files` | bool | false | If true, exports CSVs at each stage of the pipeline for debugging. |
+| `max_workers` | int | CPU count | Users processed concurrently (threads). On a shared login node set this low, and cap Polars' own thread pool with the `POLARS_MAX_THREADS` environment variable; the two are independent. CLI: `--workers`. |
 
 ## Calibration Settings
 

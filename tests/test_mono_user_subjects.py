@@ -89,3 +89,23 @@ def test_no_matching_file_refuses_with_explicit_error(tmp_path: Path) -> None:
     preprocessor = GlucoseMLPreprocessor()
     with pytest.raises(ValueError, match=r"0 of 1 data files matched a converter"):
         preprocessor.process(folder, tmp_path / "out.csv", database_type="dexcom")
+
+
+@pytest.mark.parametrize("workers", [1, 2])
+def test_worker_count_does_not_change_output(tmp_path: Path, workers: int) -> None:
+    root = tmp_path / "cohort"
+    _copy_export(root / "A")
+    _copy_export(root / "B")
+    reference = tmp_path / "reference.csv"
+    GlucoseMLPreprocessor().process(root, reference, database_type="dexcom")
+
+    out = tmp_path / f"workers_{workers}.csv"
+    preprocessor = GlucoseMLPreprocessor(max_workers=workers)
+    assert preprocessor.max_workers == workers
+    preprocessor.process(root, out, database_type="dexcom")
+    assert pl.read_csv(out, infer_schema=False).equals(pl.read_csv(reference, infer_schema=False))
+
+
+def test_worker_count_must_be_positive() -> None:
+    with pytest.raises(ValueError, match="max_workers"):
+        GlucoseMLPreprocessor(max_workers=0)

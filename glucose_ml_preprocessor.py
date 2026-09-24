@@ -308,7 +308,8 @@ class GlucoseMLPreprocessor:
             round_precision=cli_overrides.get('round_precision', config.get('round_precision', 3)),
             first_n_users=cli_overrides.get('first_n_users', config.get('first_n_users', None)),
             output_file=cli_overrides.get('output_file', config.get('output_file', None)),
-            print_statistics=cli_overrides.get('print_statistics', config.get('print_statistics', True))
+            print_statistics=cli_overrides.get('print_statistics', config.get('print_statistics', True)),
+            max_workers=cli_overrides.get('max_workers', config.get('max_workers', None)),
         )
     
     @staticmethod
@@ -344,6 +345,7 @@ class GlucoseMLPreprocessor:
         first_n_users: Optional[int] = None,
         output_file: Optional[str] = None,
         print_statistics: bool = True,
+        max_workers: Optional[int] = None,
     ) -> None:
         self.expected_interval_minutes = expected_interval_minutes
         self.small_gap_max_minutes = small_gap_max_minutes
@@ -362,6 +364,10 @@ class GlucoseMLPreprocessor:
         self.round_precision = round_precision
         self.output_file = Path(output_file) if output_file else None
         self.print_statistics = print_statistics
+        if max_workers is not None and max_workers < 1:
+            raise ValueError(f"max_workers must be >= 1, got {max_workers}")
+        # Concurrent per-user workers; None means one per CPU core.
+        self.max_workers: int = max_workers if max_workers is not None else (os.cpu_count() or 1)
         if first_n_users is not None:
             self.config['first_n_users'] = first_n_users
         
@@ -652,7 +658,7 @@ class GlucoseMLPreprocessor:
         # Use ThreadPoolExecutor: threads share memory — no IPC pipes, no pickling,
         # no Windows non-paged pool exhaustion. Polars releases the GIL so threads
         # run in parallel for Polars-heavy steps.
-        max_workers = os.cpu_count() or 1
+        max_workers = self.max_workers
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             max_active_tasks = max_workers
             futures = []
