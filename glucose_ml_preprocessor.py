@@ -692,8 +692,9 @@ class GlucoseMLPreprocessor:
                 f"No user data produced from {data_folder} as database type '{database_type}': "
                 f"{database_converter.describe_file_report()}"
                 + (
-                    f"; {users_emptied_by_filtering} user(s) had no rows left after "
-                    f"{database_type}-specific filtering"
+                    # Frames emptied after yielding, e.g. by Dexcom calibration removal;
+                    # converter-side filtering is already in describe_file_report().
+                    f"; {users_emptied_by_filtering} user frame(s) were empty after conversion"
                     if users_emptied_by_filtering
                     else ""
                 )
