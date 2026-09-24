@@ -109,3 +109,21 @@ def test_worker_count_does_not_change_output(tmp_path: Path, workers: int) -> No
 def test_worker_count_must_be_positive() -> None:
     with pytest.raises(ValueError, match="max_workers"):
         GlucoseMLPreprocessor(max_workers=0)
+
+
+def test_dexcom_high_low_mapped_and_calibration_removed() -> None:
+    source = pl.concat(
+        [pl.read_csv(f, infer_schema=False) for f in sorted(DEXCOM_SMALL.glob("*.csv"))]
+    ).filter(pl.col("Timestamp (YYYY-MM-DDThh:mm:ss)").is_not_null())
+    glucose_src = source["Glucose Value (mg/dL)"]
+    n_high = (glucose_src == "High").sum()
+    n_low = (glucose_src == "Low").sum()
+    assert n_high > 0 and n_low > 0, "fixture must exercise both out-of-range strings"
+
+    frame = _frames(DEXCOM_SMALL)[0]
+    glucose = frame["glucose_value_mgdl"]
+    assert glucose.dtype == pl.Float64
+    numeric_src = glucose_src.cast(pl.Float64, strict=False)
+    assert (glucose == 401).sum() == n_high + (numeric_src == 401).sum()
+    assert (glucose == 39).sum() == n_low + (numeric_src == 39).sum()
+    assert "Calibration" not in frame["event_type"].to_list()
