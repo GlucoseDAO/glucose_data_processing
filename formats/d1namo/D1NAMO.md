@@ -4,7 +4,7 @@
 
 D1NAMO (Dubosson et al., 2018, *Informatics in Medicine Unlocked*): a type 1 diabetes subset
 (nine subjects, CGM plus insulin and food) and a healthy subset (twenty subjects, glucose
-spot checks and food). `test_data/d1namo_small` holds diabetes subjects 001 and 002 and
+spot checks and food). `test_data/d1namo_small` holds diabetes subjects 001, 002 and 004 and
 healthy subject 004, unchanged.
 
 ## Layout

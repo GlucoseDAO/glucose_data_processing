@@ -2,7 +2,7 @@
 """
 D1NAMO converter (``glucose.csv`` in mmol/L, ``insulin.csv``; one folder per subject).
 
-``test_data/d1namo_small`` holds subjects 001 and 002 of the diabetes subset and subject 004
+``test_data/d1namo_small`` holds subjects 001, 002 and 004 of the diabetes subset and subject 004
 of the healthy subset, copied unchanged. Expected values are read from them at runtime.
 """
 
@@ -62,7 +62,9 @@ def test_fingersticks_dropped_insulin_kept(frames: dict[str, pl.DataFrame]) -> N
         fingerstick_only = set(glucose.filter(pl.col("type") != "cgm")["ts"].to_list()) - set(
             glucose.filter(pl.col("type") == "cgm")["ts"].to_list()
         )
-        insulin = _read_source(DIABETES / user_id, "insulin.csv").unique("ts", keep="first")
+        # Distinct rows; several rows at one timestamp (subject 004: fast and slow entered
+        # separately at 2014-10-03 20:00) are separate doses and must all survive the merge.
+        insulin = _read_source(DIABETES / user_id, "insulin.csv").unique(maintain_order=True)
         # A fingerstick timestamp may survive only as an insulin row, never with glucose.
         leaked = frame.filter(pl.col("timestamp").is_in(list(fingerstick_only)) & pl.col("glucose_value_mgdl").is_not_null())
         assert leaked.height == 0
@@ -73,3 +75,4 @@ def test_fingersticks_dropped_insulin_kept(frames: dict[str, pl.DataFrame]) -> N
 def test_fingerstick_only_subset_refuses(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match=r"no rows left after d1namo-specific filtering"):
         GlucoseMLPreprocessor().process(HEALTHY, tmp_path / "out.csv", database_type="d1namo")
+

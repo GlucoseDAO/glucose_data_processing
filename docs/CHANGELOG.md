@@ -29,6 +29,11 @@ Faults reported by the MetaboNet data seat against commit 8f79f45.
   timestamp: row converters write `""` for absent fields, and the same-timestamp merge took
   `""` as the first value. `test_data/dexcom_small` output: fast insulin 958.5 -> 1058.5 U,
   long-acting 905 -> 918 U; glucose unchanged.
+- Doses and carbs recorded in separate rows at the same timestamp are now summed instead
+  of keeping the first row's value (exact duplicate rows from overlapping exports are
+  dropped first). D1NAMO subject 004 enters a fast and a slow dose as two rows at
+  2014-10-03 20:00; long-acting insulin in the D1NAMO T1D output goes 173 -> 197 U.
+  Absent insulin/carb cells are now written as empty (null) rather than `""`.
 
 ### Added
 - `jaeb` format for comma-separated JAEB CGM device tables (Shah healthy non-diabetic).
