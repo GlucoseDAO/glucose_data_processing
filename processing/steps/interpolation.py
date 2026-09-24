@@ -282,7 +282,7 @@ class ValueInterpolator:
                     pl.int_ranges(1, pl.col('missing_points') + 1).alias('j_values')
                 ])
                 
-                gaps_exploded = gaps_with_j.explode('j_values').with_columns([
+                gaps_exploded = gaps_with_j.explode('j_values', empty_as_null=True).with_columns([
                     pl.col('j_values').alias('j')
                 ])
                 
