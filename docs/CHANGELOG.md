@@ -19,6 +19,11 @@ Faults reported by the MetaboNet data seat against commit 8f79f45.
   database type" unless a converter recognises their header.
 - AI-READI Dexcom `High`/`Low` readings map to the configured bounds (401/39 by default)
   instead of being dropped.
+- Dexcom CSV `High`/`Low` readings map to 401/39, and calibration events are removed
+  under `dexcom.remove_calibration`. Both steps checked display column names on frames
+  that carry standard names, so neither ran: High/Low were nulled and calibration
+  fingersticks stayed in the trace. `test_data/dexcom_small`: 31 readings at 401 and 4 at
+  39 now survive, 6 calibration rows are gone.
 - The streaming writer kept losing the CSV header when the first user's output was empty.
 
 ### Added
